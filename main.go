@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,6 +36,12 @@ var (
 	errorMessageStyle = lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#FF0000", Dark: "#FF0000"}).
 		Render
+	policyInfoStyle = lipgloss.NewStyle().
+		PaddingLeft(2).
+		Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#AAAAAA"})
+	debugStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#FF00FF", Dark: "#FF00FF"}).
+		Render
 )
 
 // Model holds the application state
@@ -50,6 +57,7 @@ type model struct {
 	currentScreen  string
 	err            error
 	width, height  int
+	statusMsg      string
 }
 
 // RoleItem represents an IAM role
@@ -59,22 +67,59 @@ type RoleItem struct {
 	description    string
 	policies       []PolicyItem
 	policiesLoaded bool
+	policyCount    int // Add count of policies
 }
 
 // PolicyItem represents an IAM policy
 type PolicyItem struct {
 	policyName     string
 	policyArn      string
+	policyType     string // Added policy type (AWS managed vs Customer managed)
 	policyDocument string
 	documentLoaded bool
 }
 
-func (i RoleItem) Title() string       { return i.roleName }
-func (i RoleItem) Description() string { return i.description }
+func (i RoleItem) Title() string { return i.roleName }
+func (i RoleItem) Description() string {
+	desc := i.description
+	if i.policiesLoaded {
+		desc += fmt.Sprintf(" | %d policies attached", len(i.policies))
+	}
+	return desc
+}
 func (i RoleItem) FilterValue() string { return i.roleName }
 
-func (i PolicyItem) Title() string       { return i.policyName }
-func (i PolicyItem) Description() string { return i.policyArn }
+func (i PolicyItem) Title() string {
+	// Make the title more prominent by adding a symbol
+	return "📄 " + i.policyName
+}
+
+func (i PolicyItem) Description() string {
+	desc := ""
+	if i.policyType == "AWS" {
+		desc = "[AWS Managed] "
+	} else if i.policyType == "Customer" {
+		desc = "[Customer Managed] "
+	}
+
+	// Show shortened ARN for better readability
+	if i.policyArn != "" {
+		parts := strings.Split(i.policyArn, "/")
+		if len(parts) > 1 {
+			// Just show the last part of the ARN for cleaner display
+			desc += parts[len(parts)-1]
+		} else {
+			// If no slash, show the last part after colon
+			colonParts := strings.Split(i.policyArn, ":")
+			if len(colonParts) > 1 {
+				desc += colonParts[len(colonParts)-1]
+			} else {
+				desc += i.policyArn
+			}
+		}
+	}
+	return desc
+}
 func (i PolicyItem) FilterValue() string { return i.policyName }
 
 // Key mappings
@@ -124,16 +169,24 @@ func initialModel() model {
 	rolesList := list.New([]list.Item{}, roleDelegate, 0, 0)
 	rolesList.Title = "AWS IAM Roles"
 	rolesList.SetShowStatusBar(false)
-	rolesList.SetFilteringEnabled(false)
+	rolesList.SetFilteringEnabled(true)
 	rolesList.Styles.Title = titleStyle
 	rolesList.Styles.PaginationStyle = paginationStyle
 	rolesList.Styles.HelpStyle = helpStyle
 
+	// Create a custom delegate for policies with more visible styling
 	policyDelegate := list.NewDefaultDelegate()
+	policyDelegate.ShowDescription = true
+	policyDelegate.SetHeight(3) // Increase height for better visibility
+	policyDelegate.Styles.SelectedTitle = selectedItemStyle.Copy().Bold(true).Foreground(lipgloss.Color("170"))
+	policyDelegate.Styles.SelectedDesc = selectedItemStyle.Copy().Foreground(lipgloss.Color("240"))
+	policyDelegate.Styles.NormalTitle = itemStyle.Copy().Bold(true)
+	policyDelegate.Styles.NormalDesc = itemStyle.Copy().Foreground(lipgloss.Color("240"))
+
 	policiesList := list.New([]list.Item{}, policyDelegate, 0, 0)
 	policiesList.Title = "Policies"
 	policiesList.SetShowStatusBar(false)
-	policiesList.SetFilteringEnabled(false)
+	policiesList.SetFilteringEnabled(true)
 	policiesList.Styles.Title = titleStyle
 	policiesList.Styles.PaginationStyle = paginationStyle
 	policiesList.Styles.HelpStyle = helpStyle
@@ -148,6 +201,7 @@ func initialModel() model {
 		loading:       false,
 		policyView:    policyView,
 		currentScreen: "roles",
+		statusMsg:     "Select a role to view its policies",
 	}
 }
 
@@ -175,9 +229,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentScreen == "policies" {
 				m.currentScreen = "roles"
 				m.selectedPolicy = nil
+				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policy_document" {
 				m.currentScreen = "policies"
+				m.statusMsg = ""
 				return m, nil
 			}
 
@@ -188,13 +244,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.Enter):
 			if m.currentScreen == "roles" {
+				if m.rolesList.SelectedItem() == nil {
+					return m, nil
+				}
+
 				if selected, ok := m.rolesList.SelectedItem().(*RoleItem); ok {
 					m.selectedRole = selected
 					m.currentScreen = "policies"
 					m.policiesList.Title = fmt.Sprintf("Policies for %s", m.selectedRole.roleName)
+					m.statusMsg = ""
 
 					if !m.selectedRole.policiesLoaded {
 						m.loading = true
+						m.statusMsg = fmt.Sprintf("Loading policies for %s...", m.selectedRole.roleName)
 						return m, loadRolePoliciesCmd(m.selectedRole.roleName)
 					} else {
 						// Update policy list with existing policies
@@ -204,19 +266,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							items = append(items, &pCopy)
 						}
 						m.policiesList.SetItems(items)
+
+						// Ensure the policy list is properly selected and focused
+						if len(items) > 0 {
+							m.policiesList.Select(0) // Select first item
+						}
+
+						// Clear the status message to avoid seeing "Found X policies" text
+						m.statusMsg = ""
 					}
 				}
 				return m, nil
 			} else if m.currentScreen == "policies" {
+				if m.policiesList.SelectedItem() == nil {
+					return m, nil
+				}
+
 				if selected, ok := m.policiesList.SelectedItem().(*PolicyItem); ok {
 					m.selectedPolicy = selected
 					m.currentScreen = "policy_document"
+					m.statusMsg = ""
 
 					if !m.selectedPolicy.documentLoaded {
 						m.loading = true
+						m.statusMsg = fmt.Sprintf("Loading policy document for %s...", m.selectedPolicy.policyName)
 						return m, loadPolicyDocumentCmd(m.selectedPolicy.policyArn)
 					} else {
 						m.policyDocument = m.selectedPolicy.policyDocument
+						m.policyView.SetContent(m.policyDocument)
 					}
 				}
 				return m, nil
@@ -231,15 +308,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		footerHeight := 3
 		verticalMarginHeight := headerHeight + footerHeight
 
-		if m.currentScreen == "roles" {
-			m.rolesList.SetSize(msg.Width, msg.Height-verticalMarginHeight)
-		} else if m.currentScreen == "policies" {
-			m.policiesList.SetSize(msg.Width, msg.Height-verticalMarginHeight)
-		} else if m.currentScreen == "policy_document" {
-			m.policyView.Width = msg.Width
-			m.policyView.Height = msg.Height - verticalMarginHeight
-		}
+		// Always resize all list components to ensure they're properly initialized
+		m.rolesList.SetSize(msg.Width, msg.Height-verticalMarginHeight)
+		m.policiesList.SetSize(msg.Width, msg.Height-verticalMarginHeight)
+		m.policyView.Width = msg.Width
+		m.policyView.Height = msg.Height - verticalMarginHeight
 
+		return m, nil
 	case rolesLoadedMsg:
 		m.loading = false
 		items := []list.Item{}
@@ -262,6 +337,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update the selected role's policies
 		m.selectedRole.policies = msg.policies
 		m.selectedRole.policiesLoaded = true
+
+		// Clear status message so we just see the policies directly
+		m.statusMsg = ""
+
 		return m, nil
 
 	case policyDocumentLoadedMsg:
@@ -327,22 +406,35 @@ func (m model) View() string {
 		return fmt.Sprintf("\n\n   Error: %s\n\n", errorMessageStyle(m.err.Error()))
 	}
 
+	var view string
+
 	switch m.currentScreen {
 	case "roles":
-		return "\n" + m.rolesList.View()
+		view = "\n" + m.rolesList.View()
+		if m.statusMsg != "" {
+			view += "\n  " + statusMessageStyle(m.statusMsg)
+		}
 	case "policies":
 		if m.selectedRole != nil {
-			return "\n" + m.policiesList.View()
+			view = "\n" + m.policiesList.View()
+			if m.statusMsg != "" {
+				view += "\n  " + statusMessageStyle(m.statusMsg)
+			}
+			view += "\n  press enter to view policy details • esc to go back • q to quit"
 		}
 	case "policy_document":
 		if m.selectedPolicy != nil {
-			headerStr := fmt.Sprintf("\n  %s\n\n", titleStyle.Render(m.selectedPolicy.policyName))
+			headerStr := fmt.Sprintf("\n  %s\n", titleStyle.Render(m.selectedPolicy.policyName))
+			if m.selectedPolicy.policyType != "" {
+				headerStr += fmt.Sprintf("  %s\n", policyInfoStyle.Render("Type: "+m.selectedPolicy.policyType))
+			}
+			headerStr += "\n"
 			helpStr := "\n\n  press o to open in editor • esc to go back • q to quit\n"
-			return headerStr + m.policyView.View() + helpStr
+			view = headerStr + m.policyView.View() + helpStr
 		}
 	}
 
-	return "Something went wrong!"
+	return view
 }
 
 // Custom messages for handling asynchronous operations
@@ -419,11 +511,15 @@ func loadRolePoliciesCmd(roleName string) tea.Cmd {
 		// Load AWS configuration
 		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
+			fmt.Printf("Error loading AWS configuration: %v\n", err)
 			return errorMsg(fmt.Errorf("error loading AWS configuration: %w", err))
 		}
 
 		// Create IAM client
 		iamClient := iam.NewFromConfig(cfg)
+
+		// Debug info
+		fmt.Printf("Fetching policies for role: %s\n", roleName)
 
 		// Get attached role policies
 		var policies []PolicyItem
@@ -434,16 +530,32 @@ func loadRolePoliciesCmd(roleName string) tea.Cmd {
 		for paginator.HasMorePages() {
 			page, err := paginator.NextPage(ctx)
 			if err != nil {
+				fmt.Printf("Error listing policies for role %s: %v\n", roleName, err)
 				return errorMsg(fmt.Errorf("error listing policies for role %s: %w", roleName, err))
 			}
 
+			fmt.Printf("Found %d policies on this page\n", len(page.AttachedPolicies))
+
 			for _, policy := range page.AttachedPolicies {
+				policyArn := aws.ToString(policy.PolicyArn)
+				policyType := "Customer"
+
+				// Check if it's an AWS managed policy
+				if strings.Contains(policyArn, "arn:aws:iam::aws:") {
+					policyType = "AWS"
+				}
+
 				policies = append(policies, PolicyItem{
 					policyName: aws.ToString(policy.PolicyName),
-					policyArn:  aws.ToString(policy.PolicyArn),
+					policyArn:  policyArn,
+					policyType: policyType,
 				})
+
+				fmt.Printf("Added policy: %s (%s)\n", aws.ToString(policy.PolicyName), policyType)
 			}
 		}
+
+		fmt.Printf("Total policies found for role %s: %d\n", roleName, len(policies))
 
 		return policiesLoadedMsg{
 			roleName: roleName,
