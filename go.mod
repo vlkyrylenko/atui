@@ -1,4 +1,4 @@
-module go-sandbox
+module atui
 
 go 1.23.0
 
