@@ -5,8 +5,10 @@ A terminal-based user interface (TUI) application for exploring AWS IAM roles an
 ## Features
 
 - List IAM roles associated with your current AWS profile
-- View policies attached to each role
+- View policies attached to each role with clear visual indicators
+- Navigate through policy lists with improved visibility
 - View and open policy JSON documents in your default text editor
+- Visual distinction between AWS managed and Customer managed policies
 - Navigate using keyboard shortcuts
 - Beautiful terminal UI with styling
 
@@ -52,16 +54,21 @@ AWS_PROFILE=dev ./atui
 ## Workflow
 
 1. The app shows a list of IAM roles you have access to
-2. Select a role to see its attached policies
+2. Select a role to see its attached policies (automatically focused for navigation)
 3. Select a policy to view its JSON document
 4. Press 'o' to open the JSON in your default editor
 
 ## Development
 
-To modify or extend this application:
+To run tests with proper mocking of AWS services:
 
 ```bash
-# Install dependencies
-go get github.com/charmbracelet/bubbletea github.com/charmbracelet/bubbles github.com/charmbracelet/lipgloss
-go get github.com/aws/aws-sdk-go-v2 github.com/aws/aws-sdk-go-v2/config github.com/aws/aws-sdk-go-v2/service/iam github.com/aws/aws-sdk-go-v2/service/sts
+go test
+```
+
+For checking test coverage:
+
+```bash
+go test -coverprofile=coverage.out
+go tool cover -html=coverage.out
 ```
