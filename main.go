@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -31,17 +32,17 @@ var (
 	paginationStyle    = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
 	helpStyle          = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
 	statusMessageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"}).
-				Render
+		Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"}).
+		Render
 	errorMessageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#FF0000", Dark: "#FF0000"}).
-				Render
+		Foreground(lipgloss.AdaptiveColor{Light: "#FF0000", Dark: "#FF0000"}).
+		Render
 	policyInfoStyle = lipgloss.NewStyle().
-			PaddingLeft(2).
-			Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#AAAAAA"})
+		PaddingLeft(2).
+		Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#AAAAAA"})
 	debugStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#FF00FF", Dark: "#FF00FF"}).
-			Render
+		Foreground(lipgloss.AdaptiveColor{Light: "#FF00FF", Dark: "#FF00FF"}).
+		Render
 )
 
 // Model holds the application state
@@ -356,7 +357,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				m.policyDocument = "Error formatting JSON: " + err.Error()
 			} else {
-				m.policyDocument = string(prettyJSON)
+				// Apply color formatting to the pretty-printed JSON
+				m.policyDocument = colorizeJSON(string(prettyJSON))
 			}
 		}
 
@@ -615,6 +617,23 @@ func decodeURLEncodedDocument(encoded string) (string, error) {
 		return "", err
 	}
 	return decoded, nil
+}
+
+// Colorize JSON policy document with green keys and pink service names
+func colorizeJSON(jsonStr string) string {
+	// Use regex to match JSON keys and their values in format: "key": value
+	keyRegex := regexp.MustCompile(`"([^"]+)"(\s*:\s*)`)
+
+	// Find service:action patterns in IAM permissions
+	actionRegex := regexp.MustCompile(`"([a-zA-Z0-9]+):(.*?)"`)
+
+	// First pass: Color the keys green
+	coloredJSON := keyRegex.ReplaceAllString(jsonStr, "\033[32m\"$1\"\033[0m$2")
+
+	// Second pass: Color service names (part before colon) in permission strings pink
+	coloredJSON = actionRegex.ReplaceAllString(coloredJSON, "\"\033[35m$1\033[0m:$2\"")
+
+	return coloredJSON
 }
 
 // Open policy document in default editor
