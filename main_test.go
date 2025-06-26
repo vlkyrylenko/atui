@@ -269,8 +269,20 @@ func TestModelUpdateKeyEvents(t *testing.T) {
 }
 
 // Test View method
-
 func TestModelView(t *testing.T) {
+	// Initialize appTheme with default values for testing
+	var err error
+	appTheme, err = loadThemeFromConfig()
+	if err != nil {
+		// If config loading fails, create a minimal theme for testing
+		appTheme = Theme{
+			statusMessageStyle:       func(msg string) string { return msg },
+			errorMessageStyle:        func(msg string) string { return msg },
+			policyNameHighlightStyle: func(name string) string { return name },
+			policyMetadataStyle:      func(metadata string) string { return metadata },
+		}
+	}
+
 	m := initialModel()
 
 	// Test loading view
