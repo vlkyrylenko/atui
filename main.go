@@ -22,38 +22,28 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	appconfig "atui/config"
 )
+
+// Theme holds all styles for the application
+type Theme struct {
+	titleStyle               lipgloss.Style
+	itemStyle                lipgloss.Style
+	selectedItemStyle        lipgloss.Style
+	paginationStyle          lipgloss.Style
+	helpStyle                lipgloss.Style
+	statusMessageStyle       func(string) string
+	errorMessageStyle        func(string) string
+	policyInfoStyle          lipgloss.Style
+	policyNameHighlightStyle func(string) string
+	policyMetadataStyle      func(string) string
+	debugStyle               func(string) string
+}
 
 // Styles
 var (
-	titleStyle         = lipgloss.NewStyle().MarginLeft(2).Bold(true)
-	itemStyle          = lipgloss.NewStyle().PaddingLeft(4)
-	selectedItemStyle  = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("170"))
-	paginationStyle    = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
-	helpStyle          = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
-	statusMessageStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"}).
-		Render
-	errorMessageStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#FF0000", Dark: "#FF0000"}).
-		Render
-	policyInfoStyle = lipgloss.NewStyle().
-		PaddingLeft(2).
-		Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#AAAAAA"})
-	policyNameHighlightStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("39")). // Bright cyan color
-		Background(lipgloss.Color("236")). // Dark background for contrast
-		PaddingLeft(1).
-		PaddingRight(1).
-		Render
-	policyMetadataStyle = lipgloss.NewStyle().
-		PaddingLeft(2).
-		Foreground(lipgloss.Color("220")). // Yellow color
-		Render
-	debugStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#FF00FF", Dark: "#FF00FF"}).
-		Render
+	appTheme Theme
 )
 
 // Model holds the application state
@@ -182,26 +172,26 @@ func initialModel() model {
 	rolesList.Title = "AWS IAM Roles"
 	rolesList.SetShowStatusBar(false)
 	rolesList.SetFilteringEnabled(true)
-	rolesList.Styles.Title = titleStyle
-	rolesList.Styles.PaginationStyle = paginationStyle
-	rolesList.Styles.HelpStyle = helpStyle
+	rolesList.Styles.Title = appTheme.titleStyle
+	rolesList.Styles.PaginationStyle = appTheme.paginationStyle
+	rolesList.Styles.HelpStyle = appTheme.helpStyle
 
 	// Create a custom delegate for policies with more visible styling
 	policyDelegate := list.NewDefaultDelegate()
 	policyDelegate.ShowDescription = true
 	policyDelegate.SetHeight(3) // Increase height for better visibility
-	policyDelegate.Styles.SelectedTitle = selectedItemStyle.Copy().Bold(true).Foreground(lipgloss.Color("170"))
-	policyDelegate.Styles.SelectedDesc = selectedItemStyle.Copy().Foreground(lipgloss.Color("240"))
-	policyDelegate.Styles.NormalTitle = itemStyle.Copy().Bold(true)
-	policyDelegate.Styles.NormalDesc = itemStyle.Copy().Foreground(lipgloss.Color("240"))
+	policyDelegate.Styles.SelectedTitle = appTheme.selectedItemStyle.Copy().Bold(true)
+	policyDelegate.Styles.SelectedDesc = appTheme.selectedItemStyle.Copy().Foreground(lipgloss.Color("240"))
+	policyDelegate.Styles.NormalTitle = appTheme.itemStyle.Copy().Bold(true)
+	policyDelegate.Styles.NormalDesc = appTheme.itemStyle.Copy().Foreground(lipgloss.Color("240"))
 
 	policiesList := list.New([]list.Item{}, policyDelegate, 0, 0)
 	policiesList.Title = "Policies"
 	policiesList.SetShowStatusBar(false)
 	policiesList.SetFilteringEnabled(true)
-	policiesList.Styles.Title = titleStyle
-	policiesList.Styles.PaginationStyle = paginationStyle
-	policiesList.Styles.HelpStyle = helpStyle
+	policiesList.Styles.Title = appTheme.titleStyle
+	policiesList.Styles.PaginationStyle = appTheme.paginationStyle
+	policiesList.Styles.HelpStyle = appTheme.helpStyle
 
 	policyView := viewport.New(0, 0)
 	policyView.Style = lipgloss.NewStyle().Padding(1, 2)
@@ -418,7 +408,7 @@ func (m model) View() string {
 	if m.err != nil {
 		// Wrap error message to fit screen width, leaving some margin
 		wrappedErrorMsg := wordWrap(m.err.Error(), m.width-10)
-		return fmt.Sprintf("\n\n   Error: %s\n\n", errorMessageStyle(wrappedErrorMsg))
+		return fmt.Sprintf("\n\n   Error: %s\n\n", appTheme.errorMessageStyle(wrappedErrorMsg))
 	}
 
 	var view string
@@ -427,25 +417,25 @@ func (m model) View() string {
 	case "roles":
 		view = "\n" + m.rolesList.View()
 		if m.statusMsg != "" {
-			view += "\n  " + statusMessageStyle(m.statusMsg)
+			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
 	case "policies":
 		if m.selectedRole != nil {
 			view = "\n" + m.policiesList.View()
 			if m.statusMsg != "" {
-				view += "\n  " + statusMessageStyle(m.statusMsg)
+				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 			}
 			view += "\n  press enter to view policy details • esc to go back • q to quit"
 		}
 	case "policy_document":
 		if m.selectedPolicy != nil {
 			// Use the highlighted style for the policy name
-			headerStr := fmt.Sprintf("\n  %s\n", policyNameHighlightStyle(m.selectedPolicy.policyName))
+			headerStr := fmt.Sprintf("\n  %s\n", appTheme.policyNameHighlightStyle(m.selectedPolicy.policyName))
 			if m.selectedPolicy.policyType != "" {
-				headerStr += fmt.Sprintf("  %s\n", policyMetadataStyle("Type: "+m.selectedPolicy.policyType))
+				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("Type: "+m.selectedPolicy.policyType))
 			}
 			if m.selectedPolicy.policyArn != "" {
-				headerStr += fmt.Sprintf("  %s\n", policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
+				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
 			helpStr := "\n\n  press o to open in editor • esc to go back • q to quit\n"
@@ -636,19 +626,47 @@ func decodeURLEncodedDocument(encoded string) (string, error) {
 	return decoded, nil
 }
 
-// Colorize JSON policy document with green keys and pink service names
+// Colorize JSON policy document with configured colors
 func colorizeJSON(jsonStr string) string {
+	// Get the configured colors from config
+	cfg, err := appconfig.Load()
+	if err != nil {
+		// Fallback to default colors
+		cfg = &appconfig.DefaultConfig
+	}
+
+	// Convert ANSI color numbers to escape codes
+	keyColorCode := "32"         // Default: green
+	serviceNameColorCode := "35" // Default: pink
+
+	if cfg.Colors.JsonKey != "" {
+		keyColorCode = cfg.Colors.JsonKey
+	}
+	if cfg.Colors.JsonServiceName != "" {
+		serviceNameColorCode = cfg.Colors.JsonServiceName
+	}
+
+	// Remove ANSI prefix if it exists (some people might add the full escape code)
+	if strings.HasPrefix(keyColorCode, "\033[") {
+		keyColorCode = strings.TrimPrefix(keyColorCode, "\033[")
+		keyColorCode = strings.TrimSuffix(keyColorCode, "m")
+	}
+	if strings.HasPrefix(serviceNameColorCode, "\033[") {
+		serviceNameColorCode = strings.TrimPrefix(serviceNameColorCode, "\033[")
+		serviceNameColorCode = strings.TrimSuffix(serviceNameColorCode, "m")
+	}
+
 	// Use regex to match JSON keys and their values in format: "key": value
 	keyRegex := regexp.MustCompile(`"([^"]+)"(\s*:\s*)`)
 
 	// Find service:action patterns in IAM permissions
 	actionRegex := regexp.MustCompile(`"([a-zA-Z0-9]+):(.*?)"`)
 
-	// First pass: Color the keys green
-	coloredJSON := keyRegex.ReplaceAllString(jsonStr, "\033[32m\"$1\"\033[0m$2")
+	// First pass: Color the keys according to config
+	coloredJSON := keyRegex.ReplaceAllString(jsonStr, fmt.Sprintf("\033[%sm\"$1\"\033[0m$2", keyColorCode))
 
-	// Second pass: Color service names (part before colon) in permission strings pink
-	coloredJSON = actionRegex.ReplaceAllString(coloredJSON, "\"\033[35m$1\033[0m:$2\"")
+	// Second pass: Color service names according to config
+	coloredJSON = actionRegex.ReplaceAllString(coloredJSON, fmt.Sprintf("\"\033[%sm$1\033[0m:$2\"", serviceNameColorCode))
 
 	return coloredJSON
 }
@@ -731,8 +749,88 @@ func wordWrap(text string, maxWidth int) string {
 }
 
 func main() {
+	// Load the color theme from the config file
+	var err error
+	appTheme, err = loadThemeFromConfig()
+	if err != nil {
+		log.Fatalf("error loading theme from config: %v", err)
+	}
+
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// loadThemeFromConfig loads the color theme from the config package
+func loadThemeFromConfig() (Theme, error) {
+	var theme Theme
+
+	// Load configuration from file or use defaults
+	cfg, err := appconfig.Load()
+	if err != nil {
+		return theme, fmt.Errorf("error loading config: %w", err)
+	}
+
+	// Apply colors from config
+	theme.titleStyle = lipgloss.NewStyle().MarginLeft(2)
+	if cfg.Colors.Title == "bold" {
+		theme.titleStyle = theme.titleStyle.Bold(true)
+	} else {
+		fg := appconfig.GetForegroundColor(cfg.Colors.Title)
+		theme.titleStyle = theme.titleStyle.Foreground(fg)
+	}
+
+	theme.itemStyle = lipgloss.NewStyle().PaddingLeft(4)
+	if cfg.Colors.Item != "" {
+		theme.itemStyle = theme.itemStyle.Foreground(appconfig.GetForegroundColor(cfg.Colors.Item))
+	}
+
+	theme.selectedItemStyle = lipgloss.NewStyle().
+		PaddingLeft(2).
+		Foreground(appconfig.GetForegroundColor(cfg.Colors.SelectedItem))
+
+	theme.paginationStyle = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
+	theme.helpStyle = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
+
+	theme.statusMessageStyle = func(msg string) string {
+		return lipgloss.NewStyle().
+			Foreground(appconfig.GetForegroundColor(cfg.Colors.Status)).
+			Render(msg)
+	}
+
+	theme.errorMessageStyle = func(msg string) string {
+		return lipgloss.NewStyle().
+			Foreground(appconfig.GetForegroundColor(cfg.Colors.Error)).
+			Render(msg)
+	}
+
+	theme.policyInfoStyle = lipgloss.NewStyle().
+		PaddingLeft(2).
+		Foreground(appconfig.GetForegroundColor(cfg.Colors.PolicyInfo))
+
+	theme.policyNameHighlightStyle = func(name string) string {
+		return lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(cfg.Colors.PolicyNameFg)).
+			Background(lipgloss.Color(cfg.Colors.PolicyNameBg)).
+			PaddingLeft(1).
+			PaddingRight(1).
+			Render(name)
+	}
+
+	theme.policyMetadataStyle = func(metadata string) string {
+		return lipgloss.NewStyle().
+			PaddingLeft(2).
+			Foreground(lipgloss.Color(cfg.Colors.PolicyMetadata)).
+			Render(metadata)
+	}
+
+	theme.debugStyle = func(msg string) string {
+		return lipgloss.NewStyle().
+			Foreground(appconfig.GetForegroundColor(cfg.Colors.Debug)).
+			Render(msg)
+	}
+
+	return theme, nil
 }
