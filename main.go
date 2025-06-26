@@ -31,17 +31,17 @@ var (
 	paginationStyle    = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
 	helpStyle          = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
 	statusMessageStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"}).
-		Render
+				Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"}).
+				Render
 	errorMessageStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#FF0000", Dark: "#FF0000"}).
-		Render
+				Foreground(lipgloss.AdaptiveColor{Light: "#FF0000", Dark: "#FF0000"}).
+				Render
 	policyInfoStyle = lipgloss.NewStyle().
-		PaddingLeft(2).
-		Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#AAAAAA"})
+			PaddingLeft(2).
+			Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#AAAAAA"})
 	debugStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#FF00FF", Dark: "#FF00FF"}).
-		Render
+			Foreground(lipgloss.AdaptiveColor{Light: "#FF00FF", Dark: "#FF00FF"}).
+			Render
 )
 
 // Model holds the application state
