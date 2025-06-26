@@ -40,6 +40,17 @@ var (
 	policyInfoStyle = lipgloss.NewStyle().
 		PaddingLeft(2).
 		Foreground(lipgloss.AdaptiveColor{Light: "#555555", Dark: "#AAAAAA"})
+	policyNameHighlightStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("39")). // Bright cyan color
+		Background(lipgloss.Color("236")). // Dark background for contrast
+		PaddingLeft(1).
+		PaddingRight(1).
+		Render
+	policyMetadataStyle = lipgloss.NewStyle().
+		PaddingLeft(2).
+		Foreground(lipgloss.Color("220")). // Yellow color
+		Render
 	debugStyle = lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#FF00FF", Dark: "#FF00FF"}).
 		Render
@@ -428,9 +439,13 @@ func (m model) View() string {
 		}
 	case "policy_document":
 		if m.selectedPolicy != nil {
-			headerStr := fmt.Sprintf("\n  %s\n", titleStyle.Render(m.selectedPolicy.policyName))
+			// Use the highlighted style for the policy name
+			headerStr := fmt.Sprintf("\n  %s\n", policyNameHighlightStyle(m.selectedPolicy.policyName))
 			if m.selectedPolicy.policyType != "" {
-				headerStr += fmt.Sprintf("  %s\n", policyInfoStyle.Render("Type: "+m.selectedPolicy.policyType))
+				headerStr += fmt.Sprintf("  %s\n", policyMetadataStyle("Type: "+m.selectedPolicy.policyType))
+			}
+			if m.selectedPolicy.policyArn != "" {
+				headerStr += fmt.Sprintf("  %s\n", policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
 			helpStr := "\n\n  press o to open in editor • esc to go back • q to quit\n"
