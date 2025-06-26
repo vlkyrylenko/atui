@@ -403,7 +403,9 @@ func (m model) View() string {
 	}
 
 	if m.err != nil {
-		return fmt.Sprintf("\n\n   Error: %s\n\n", errorMessageStyle(m.err.Error()))
+		// Wrap error message to fit screen width, leaving some margin
+		wrappedErrorMsg := wordWrap(m.err.Error(), m.width-10)
+		return fmt.Sprintf("\n\n   Error: %s\n\n", errorMessageStyle(wrappedErrorMsg))
 	}
 
 	var view string
@@ -661,6 +663,37 @@ func openInEditorCmd(content string) tea.Cmd {
 
 		return nil // No message needed when returning to the app
 	}
+}
+
+// wordWrap wraps text to fit within maxWidth characters per line
+func wordWrap(text string, maxWidth int) string {
+	if maxWidth <= 0 || len(text) == 0 {
+		return text
+	}
+
+	var result strings.Builder
+	lineLen := 0
+	words := strings.Fields(text)
+
+	for i, word := range words {
+		wordLen := len(word)
+
+		// If this is not the first word and adding it would exceed maxWidth,
+		// append a newline before the word
+		if lineLen > 0 && lineLen+wordLen+1 > maxWidth {
+			result.WriteString("\n")
+			lineLen = 0
+		} else if i > 0 {
+			// Add space before non-first words on the same line
+			result.WriteString(" ")
+			lineLen++
+		}
+
+		result.WriteString(word)
+		lineLen += wordLen
+	}
+
+	return result.String()
 }
 
 func main() {
