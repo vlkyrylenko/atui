@@ -773,12 +773,13 @@ func loadThemeFromConfig() (Theme, error) {
 	}
 
 	// Apply colors from config
-	theme.titleStyle = lipgloss.NewStyle().MarginLeft(2)
+	theme.titleStyle = lipgloss.NewStyle().MarginLeft(2).Foreground(lipgloss.Color("205")) // Set pink color
+	// The below configuration is overridden by our pink setting above, but kept for backwards compatibility
 	if cfg.Colors.Title == "bold" {
 		theme.titleStyle = theme.titleStyle.Bold(true)
-	} else {
-		fg := appconfig.GetForegroundColor(cfg.Colors.Title)
-		theme.titleStyle = theme.titleStyle.Foreground(fg)
+	} else if cfg.Colors.Title != "" {
+		appconfig.GetForegroundColor(cfg.Colors.Title)
+		theme.titleStyle = theme.titleStyle.Foreground(lipgloss.Color("205")) // Ensure pink color is applied
 	}
 
 	theme.itemStyle = lipgloss.NewStyle().PaddingLeft(4)
