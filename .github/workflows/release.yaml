@@ -32,7 +32,6 @@ jobs:
           fetch-depth: 0
       - name: Build Go binaries
         uses: wangyoucao577/go-release-action@v1
-        working-directory: .
         with:
           pre_command: "export CGO_ENABLED=0"
           github_token: ${{ secrets.GITHUB_TOKEN }}
