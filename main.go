@@ -671,49 +671,71 @@ func colorizeJSON(jsonStr string) string {
 	return coloredJSON
 }
 
-// Open policy document in default editor
+// Strip ANSI color codes from text
+func stripAnsiCodes(text string) string {
+	// Remove ANSI escape sequences
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansiRegex.ReplaceAllString(text, "")
+}
+
+// Open policy document in default editor in read-only mode
 func openInEditorCmd(content string) tea.Cmd {
 	return func() tea.Msg {
-		// Create a temporary file
+		// Strip ANSI color codes to get clean JSON
+		cleanContent := stripAnsiCodes(content)
+
+		// Create a temporary file with .json extension for better editor support
 		tmpFile, err := os.CreateTemp("", "aws-policy-*.json")
 		if err != nil {
 			return errorMsg(fmt.Errorf("error creating temp file: %w", err))
 		}
-		defer tmpFile.Close()
 
-		// Write the policy content to the file
-		if _, err := tmpFile.WriteString(content); err != nil {
+		// Write clean JSON content to the file
+		if _, err := tmpFile.WriteString(cleanContent); err != nil {
+			tmpFile.Close()
 			return errorMsg(fmt.Errorf("error writing to temp file: %w", err))
 		}
+		tmpFile.Close()
 
 		filename := tmpFile.Name()
 
-		// Determine which editor to use
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			// Default editors depending on platform
-			editor = "nano" // Linux default
+		// Make the file read-only at the filesystem level
+		// This provides universal read-only protection regardless of editor
+		if err := os.Chmod(filename, 0444); err != nil {
+			os.Remove(filename)
+			return errorMsg(fmt.Errorf("error setting file to read-only: %w", err))
 		}
 
-		// Prepare editor command
+		// Use the user's configured editor from EDITOR environment variable
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			os.Remove(filename)
+			return errorMsg(fmt.Errorf("no editor configured: please set the EDITOR environment variable"))
+		}
+
+		// Create command with the user's preferred editor and the read-only file
+		// No special handling needed - let the editor handle the read-only file as it sees fit
 		cmd := exec.Command(editor, filename)
+
+		// Set up command I/O to allow interactive editing
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
 		// Execute the editor
 		err = cmd.Run()
+
+		// Clean up the temporary file
+		os.Remove(filename)
+
 		if err != nil {
-			return errorMsg(fmt.Errorf("error opening editor: %w", err))
+			return errorMsg(fmt.Errorf("error running editor '%s': %w", editor, err))
 		}
 
-		// Wait a moment to let the user see the result when they exit the editor
-		time.Sleep(500 * time.Millisecond)
+		// Brief pause to let the user process what they saw before returning to TUI
+		time.Sleep(200 * time.Millisecond)
 
-		// Since we're returning to the TUI, we don't need to read the file back
-		// The temp file will be cleaned up eventually by the OS
-
-		return nil // No message needed when returning to the app
+		return nil // Return to the application
 	}
 }
 
