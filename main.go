@@ -503,7 +503,7 @@ func (m model) View() string {
 	if m.currentProfile != "" {
 		profileStyle := lipgloss.NewStyle().
 			Background(lipgloss.Color("220")). // Yellow background
-			Foreground(lipgloss.Color("0")). // Black text
+			Foreground(lipgloss.Color("0")).   // Black text
 			Bold(true).
 			Padding(0, 1)
 
