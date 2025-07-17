@@ -23,7 +23,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	appconfig "atui/config"
+	appconfig "github.com/vlkyrylenko/atui/config"
 )
 
 // Theme holds all styles for the application
