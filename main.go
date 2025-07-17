@@ -8,11 +8,9 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -129,13 +127,21 @@ func (i PolicyItem) Description() string {
 }
 func (i PolicyItem) FilterValue() string { return i.policyName }
 
+// ProfileItem represents an AWS profile for the list
+type ProfileItem struct {
+	name string
+}
+
+func (i ProfileItem) Title() string       { return i.name }
+func (i ProfileItem) Description() string { return "" }
+func (i ProfileItem) FilterValue() string { return i.name }
+
 // Key mappings
 type keyMap struct {
 	Up            key.Binding
 	Down          key.Binding
 	Enter         key.Binding
 	Back          key.Binding
-	OpenJSON      key.Binding
 	SwitchProfile key.Binding
 	Quit          key.Binding
 }
@@ -154,12 +160,8 @@ var keys = keyMap{
 		key.WithHelp("enter", "select"),
 	),
 	Back: key.NewBinding(
-		key.WithKeys("esc", "backspace"),
-		key.WithHelp("esc/backspace", "back"),
-	),
-	OpenJSON: key.NewBinding(
-		key.WithKeys("o"),
-		key.WithHelp("o", "open JSON"),
+		key.WithKeys("escape", "esc"),
+		key.WithHelp("esc", "back"),
 	),
 	SwitchProfile: key.NewBinding(
 		key.WithKeys("p"),
@@ -185,15 +187,18 @@ func initialModel() model {
 	rolesList.Styles.Title = appTheme.titleStyle
 	rolesList.Styles.PaginationStyle = appTheme.paginationStyle
 	rolesList.Styles.HelpStyle = appTheme.helpStyle
+	// Disable default list keybindings for Escape key
+	rolesList.KeyMap.Quit.SetKeys("ctrl+c")
+	rolesList.KeyMap.CloseFullHelp.SetKeys("q")
 
 	// Create a custom delegate for policies with more visible styling
 	policyDelegate := list.NewDefaultDelegate()
 	policyDelegate.ShowDescription = true
 	policyDelegate.SetHeight(3) // Increase height for better visibility
-	policyDelegate.Styles.SelectedTitle = appTheme.selectedItemStyle.Copy().Bold(true)
-	policyDelegate.Styles.SelectedDesc = appTheme.selectedItemStyle.Copy().Foreground(lipgloss.Color("240"))
-	policyDelegate.Styles.NormalTitle = appTheme.itemStyle.Copy().Bold(true)
-	policyDelegate.Styles.NormalDesc = appTheme.itemStyle.Copy().Foreground(lipgloss.Color("240"))
+	policyDelegate.Styles.SelectedTitle = appTheme.selectedItemStyle.Bold(true)
+	policyDelegate.Styles.SelectedDesc = appTheme.selectedItemStyle.Foreground(lipgloss.Color("240"))
+	policyDelegate.Styles.NormalTitle = appTheme.itemStyle.Bold(true)
+	policyDelegate.Styles.NormalDesc = appTheme.itemStyle.Foreground(lipgloss.Color("240"))
 
 	policiesList := list.New([]list.Item{}, policyDelegate, 0, 0)
 	policiesList.Title = "Policies"
@@ -202,6 +207,9 @@ func initialModel() model {
 	policiesList.Styles.Title = appTheme.titleStyle
 	policiesList.Styles.PaginationStyle = appTheme.paginationStyle
 	policiesList.Styles.HelpStyle = appTheme.helpStyle
+	// Disable default list keybindings for Escape key
+	policiesList.KeyMap.Quit.SetKeys("ctrl+c")
+	policiesList.KeyMap.CloseFullHelp.SetKeys("q")
 
 	policyView := viewport.New(0, 0)
 	policyView.Style = lipgloss.NewStyle().Padding(1, 2)
@@ -213,6 +221,9 @@ func initialModel() model {
 	profilesList.Styles.Title = appTheme.titleStyle
 	profilesList.Styles.PaginationStyle = appTheme.paginationStyle
 	profilesList.Styles.HelpStyle = appTheme.helpStyle
+	// Disable default list keybindings for Escape key
+	profilesList.KeyMap.Quit.SetKeys("ctrl+c")
+	profilesList.KeyMap.CloseFullHelp.SetKeys("q")
 
 	return model{
 		rolesList:     rolesList,
@@ -222,13 +233,13 @@ func initialModel() model {
 		policyView:    policyView,
 		currentScreen: "roles",
 		statusMsg:     "Select a role to view its policies",
-		profilesList:  *profilesList,
+		profilesList:  profilesList,
 	}
 }
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		spinner.Tick,
+		m.spinner.Tick,
 		loadCurrentProfileCmd(),
 		loadIAMRolesCmd(),
 	)
@@ -243,6 +254,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Direct check for Escape key by its type
+		if msg.Type == tea.KeyEsc {
+			if m.currentScreen == "profiles" {
+				m.currentScreen = "roles"
+				m.statusMsg = ""
+				return m, nil
+			} else if m.currentScreen == "policies" {
+				m.currentScreen = "roles"
+				m.selectedPolicy = nil
+				m.statusMsg = ""
+				return m, nil
+			} else if m.currentScreen == "policy_document" {
+				m.currentScreen = "policies"
+				m.statusMsg = ""
+				return m, nil
+			}
+		}
+
 		switch {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
@@ -251,6 +280,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentScreen != "profiles" {
 				m.currentScreen = "profiles"
 				m.loading = true
+				// Ensure profiles list is properly sized
+				headerHeight := 6
+				footerHeight := 3
+				verticalMarginHeight := headerHeight + footerHeight
+				m.profilesList.SetSize(m.width, m.height-verticalMarginHeight)
 				return m, loadAWSProfilesCmd()
 			}
 
@@ -268,11 +302,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentScreen = "policies"
 				m.statusMsg = ""
 				return m, nil
-			}
-
-		case key.Matches(msg, keys.OpenJSON):
-			if m.currentScreen == "policy_document" && m.selectedPolicy != nil {
-				return m, openInEditorCmd(m.policyDocument)
 			}
 
 		case key.Matches(msg, keys.Enter):
@@ -335,8 +364,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-				if selected, ok := m.profilesList.SelectedItem().(string); ok {
-					m.currentProfile = selected
+				if selected, ok := m.profilesList.SelectedItem().(*ProfileItem); ok {
+					m.currentProfile = selected.name
 					m.statusMsg = fmt.Sprintf("Switched to profile: %s", m.currentProfile)
 				}
 				return m, nil
@@ -354,6 +383,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Always resize all list components to ensure they're properly initialized
 		m.rolesList.SetSize(msg.Width, msg.Height-verticalMarginHeight)
 		m.policiesList.SetSize(msg.Width, msg.Height-verticalMarginHeight)
+		m.profilesList.SetSize(msg.Width, msg.Height-verticalMarginHeight)
 		m.policyView.Width = msg.Width
 		m.policyView.Height = msg.Height - verticalMarginHeight
 
@@ -416,10 +446,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.availableProfiles = msg.profiles
 		m.currentProfile = msg.currentProfile
 
-		// Convert profiles to list items
+		// Convert profiles to list items using ProfileItem
 		items := []list.Item{}
 		for _, profile := range msg.profiles {
-			items = append(items, profile)
+			items = append(items, &ProfileItem{name: profile})
 		}
 		m.profilesList.SetItems(items)
 		return m, nil
@@ -547,7 +577,7 @@ func (m model) View() string {
 				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
-			helpStr := "\n\n  press o to open in editor • p to switch profiles • esc to go back • q to quit\n"
+			helpStr := "\n\n  press p to switch profiles • esc to go back • q to quit\n"
 			view = header + headerStr + m.policyView.View() + helpStr
 		}
 
@@ -811,67 +841,6 @@ func stripAnsiCodes(text string) string {
 	return ansiRegex.ReplaceAllString(text, "")
 }
 
-// Open policy document in default editor in read-only mode
-func openInEditorCmd(content string) tea.Cmd {
-	return func() tea.Msg {
-		// Strip ANSI color codes to get clean JSON
-		cleanContent := stripAnsiCodes(content)
-
-		// Create a temporary file with .json extension for better editor support
-		tmpFile, err := os.CreateTemp("", "aws-policy-*.json")
-		if err != nil {
-			return errorMsg(fmt.Errorf("error creating temp file: %w", err))
-		}
-
-		// Write clean JSON content to the file
-		if _, err := tmpFile.WriteString(cleanContent); err != nil {
-			tmpFile.Close()
-			return errorMsg(fmt.Errorf("error writing to temp file: %w", err))
-		}
-		tmpFile.Close()
-
-		filename := tmpFile.Name()
-
-		// Make the file read-only at the filesystem level
-		// This provides universal read-only protection regardless of editor
-		if err := os.Chmod(filename, 0444); err != nil {
-			os.Remove(filename)
-			return errorMsg(fmt.Errorf("error setting file to read-only: %w", err))
-		}
-
-		// Use the user's configured editor from EDITOR environment variable
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			os.Remove(filename)
-			return errorMsg(fmt.Errorf("no editor configured: please set the EDITOR environment variable"))
-		}
-
-		// Create command with the user's preferred editor and the read-only file
-		// No special handling needed - let the editor handle the read-only file as it sees fit
-		cmd := exec.Command(editor, filename)
-
-		// Set up command I/O to allow interactive editing
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		// Execute the editor
-		err = cmd.Run()
-
-		// Clean up the temporary file
-		os.Remove(filename)
-
-		if err != nil {
-			return errorMsg(fmt.Errorf("error running editor '%s': %w", editor, err))
-		}
-
-		// Brief pause to let the user process what they saw before returning to TUI
-		time.Sleep(200 * time.Millisecond)
-
-		return nil // Return to the application
-	}
-}
-
 // wordWrap wraps text to fit within maxWidth characters per line
 func wordWrap(text string, maxWidth int) string {
 	if maxWidth <= 0 || len(text) == 0 {
@@ -1008,7 +977,7 @@ func loadAWSProfilesCmd() tea.Cmd {
 
 		// Parse config file
 		if file, err := os.Open(configPath); err == nil {
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
@@ -1024,7 +993,7 @@ func loadAWSProfilesCmd() tea.Cmd {
 
 		// Parse credentials file
 		if file, err := os.Open(credentialsPath); err == nil {
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
