@@ -50,96 +50,114 @@ var DefaultConfig = Config{
 
 // Load reads config from file or creates a default if not exist
 func Load() (*Config, error) {
-	// Get config path
-	configDir, err := getConfigDir()
+	configPath, err := getConfigPath()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get config path: %w", err)
 	}
-
-	configPath := filepath.Join(configDir, "config.json")
 
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Create default config
-		err = os.MkdirAll(configDir, 0755)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create config directory: %w", err)
+		// Create default config file
+		if err := SaveDefaultConfig(); err != nil {
+			return nil, fmt.Errorf("failed to create default config: %w", err)
 		}
-
-		// Save default config
-		err = DefaultConfig.Save()
-		if err != nil {
-			return nil, fmt.Errorf("failed to save default config: %w", err)
-		}
-
 		return &DefaultConfig, nil
 	}
 
-	// Read config file
+	// Read existing config file
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	// Parse JSON
 	var config Config
-	err = json.Unmarshal(data, &config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config JSON: %w", err)
 	}
 
 	return &config, nil
 }
 
-// Save writes config to file
-func (c *Config) Save() error {
-	configDir, err := getConfigDir()
+// SaveDefaultConfig creates the default configuration file
+func SaveDefaultConfig() error {
+	configPath, err := getConfigPath()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get config path: %w", err)
 	}
 
-	// Create config directory if not exists
-	err = os.MkdirAll(configDir, 0755)
-	if err != nil {
+	// Create config directory if it doesn't exist
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	configPath := filepath.Join(configDir, "config.json")
-
-	data, err := json.MarshalIndent(c, "", "  ")
+	// Marshal default config to JSON
+	data, err := json.MarshalIndent(DefaultConfig, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return fmt.Errorf("failed to marshal default config: %w", err)
 	}
 
-	err = os.WriteFile(configPath, data, 0644)
-	if err != nil {
+	// Write to file
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
 	return nil
 }
 
-// getConfigDir returns the path to config directory
-func getConfigDir() (string, error) {
+// getConfigPath returns the path to the configuration file
+func getConfigPath() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	return filepath.Join(homeDir, ".config", "atui"), nil
+	return filepath.Join(homeDir, ".config", "atui", "config.json"), nil
 }
 
-// GetForegroundColor returns a lipgloss color from the config
-func GetForegroundColor(colorString string) lipgloss.AdaptiveColor {
-	if colorString == "" {
-		// If empty, don't color
-		return lipgloss.AdaptiveColor{}
+// GetTheme creates a lipgloss theme from the configuration
+func (c *Config) GetTheme() *Theme {
+	return &Theme{
+		titleStyle:        lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.Title)),
+		itemStyle:         lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.Item)),
+		selectedItemStyle: lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.SelectedItem)),
+		paginationStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.PolicyInfo)),
+		helpStyle:         lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.PolicyInfo)),
+		statusMessageStyle: func(s string) string {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.Status)).Render(s)
+		},
+		errorMessageStyle: func(s string) string { return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.Error)).Render(s) },
+		policyInfoStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.PolicyInfo)),
+		policyNameHighlightStyle: func(s string) string {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.PolicyNameFg)).Background(lipgloss.Color(c.Colors.PolicyNameBg)).Render(s)
+		},
+		policyMetadataStyle: func(s string) string {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.PolicyMetadata)).Render(s)
+		},
+		debugStyle: func(s string) string { return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.Debug)).Render(s) },
 	}
+}
 
-	// If it starts with #, it's a hex color
-	if colorString[0] == '#' {
-		return lipgloss.AdaptiveColor{Light: colorString, Dark: colorString}
+// Theme holds all styles for the application (moved from main.go for better organization)
+type Theme struct {
+	titleStyle               lipgloss.Style
+	itemStyle                lipgloss.Style
+	selectedItemStyle        lipgloss.Style
+	paginationStyle          lipgloss.Style
+	helpStyle                lipgloss.Style
+	statusMessageStyle       func(string) string
+	errorMessageStyle        func(string) string
+	policyInfoStyle          lipgloss.Style
+	policyNameHighlightStyle func(string) string
+	policyMetadataStyle      func(string) string
+	debugStyle               func(string) string
+}
+
+// GetForegroundColor converts a color string to lipgloss color
+func GetForegroundColor(colorStr string) lipgloss.Color {
+	if colorStr == "" {
+		return lipgloss.Color("")
 	}
-
-	// Otherwise, it's an ANSI color or special keyword
-	return lipgloss.AdaptiveColor{Light: colorString, Dark: colorString}
+	return lipgloss.Color(colorStr)
 }
