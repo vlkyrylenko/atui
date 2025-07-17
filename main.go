@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -48,18 +50,21 @@ var (
 
 // Model holds the application state
 type model struct {
-	rolesList      list.Model
-	policiesList   list.Model
-	loading        bool
-	spinner        spinner.Model
-	selectedRole   *RoleItem
-	policyView     viewport.Model
-	selectedPolicy *PolicyItem
-	policyDocument string
-	currentScreen  string
-	err            error
-	width, height  int
-	statusMsg      string
+	rolesList         list.Model
+	policiesList      list.Model
+	loading           bool
+	spinner           spinner.Model
+	selectedRole      *RoleItem
+	policyView        viewport.Model
+	selectedPolicy    *PolicyItem
+	policyDocument    string
+	currentScreen     string
+	err               error
+	width, height     int
+	statusMsg         string
+	currentProfile    string
+	availableProfiles []string
+	profilesList      list.Model
 }
 
 // RoleItem represents an IAM role
@@ -126,12 +131,13 @@ func (i PolicyItem) FilterValue() string { return i.policyName }
 
 // Key mappings
 type keyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Enter    key.Binding
-	Back     key.Binding
-	OpenJSON key.Binding
-	Quit     key.Binding
+	Up            key.Binding
+	Down          key.Binding
+	Enter         key.Binding
+	Back          key.Binding
+	OpenJSON      key.Binding
+	SwitchProfile key.Binding
+	Quit          key.Binding
 }
 
 var keys = keyMap{
@@ -154,6 +160,10 @@ var keys = keyMap{
 	OpenJSON: key.NewBinding(
 		key.WithKeys("o"),
 		key.WithHelp("o", "open JSON"),
+	),
+	SwitchProfile: key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", "switch profile"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
@@ -196,6 +206,14 @@ func initialModel() model {
 	policyView := viewport.New(0, 0)
 	policyView.Style = lipgloss.NewStyle().Padding(1, 2)
 
+	profilesList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	profilesList.Title = "AWS Profiles"
+	profilesList.SetShowStatusBar(false)
+	profilesList.SetFilteringEnabled(true)
+	profilesList.Styles.Title = appTheme.titleStyle
+	profilesList.Styles.PaginationStyle = appTheme.paginationStyle
+	profilesList.Styles.HelpStyle = appTheme.helpStyle
+
 	return model{
 		rolesList:     rolesList,
 		policiesList:  policiesList,
@@ -204,12 +222,14 @@ func initialModel() model {
 		policyView:    policyView,
 		currentScreen: "roles",
 		statusMsg:     "Select a role to view its policies",
+		profilesList:  *profilesList,
 	}
 }
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		spinner.Tick,
+		loadCurrentProfileCmd(),
 		loadIAMRolesCmd(),
 	)
 }
@@ -227,8 +247,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
 
+		case key.Matches(msg, keys.SwitchProfile):
+			if m.currentScreen != "profiles" {
+				m.currentScreen = "profiles"
+				m.loading = true
+				return m, loadAWSProfilesCmd()
+			}
+
 		case key.Matches(msg, keys.Back):
-			if m.currentScreen == "policies" {
+			if m.currentScreen == "profiles" {
+				m.currentScreen = "roles"
+				m.statusMsg = ""
+				return m, nil
+			} else if m.currentScreen == "policies" {
 				m.currentScreen = "roles"
 				m.selectedPolicy = nil
 				m.statusMsg = ""
@@ -297,6 +328,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.policyDocument = m.selectedPolicy.policyDocument
 						m.policyView.SetContent(m.policyDocument)
 					}
+				}
+				return m, nil
+			} else if m.currentScreen == "profiles" {
+				if m.profilesList.SelectedItem() == nil {
+					return m, nil
+				}
+
+				if selected, ok := m.profilesList.SelectedItem().(string); ok {
+					m.currentProfile = selected
+					m.statusMsg = fmt.Sprintf("Switched to profile: %s", m.currentProfile)
 				}
 				return m, nil
 			}
@@ -370,6 +411,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectedPolicy.documentLoaded = true
 		return m, nil
 
+	case profilesLoadedMsg:
+		m.loading = false
+		m.availableProfiles = msg.profiles
+		m.currentProfile = msg.currentProfile
+
+		// Convert profiles to list items
+		items := []list.Item{}
+		for _, profile := range msg.profiles {
+			items = append(items, profile)
+		}
+		m.profilesList.SetItems(items)
+		return m, nil
+
 	case spinner.TickMsg:
 		var spinnerCmd tea.Cmd
 		m.spinner, spinnerCmd = m.spinner.Update(msg)
@@ -394,6 +448,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "policy_document":
 		m.policyView, cmd = m.policyView.Update(msg)
 		cmds = append(cmds, cmd)
+	case "profiles":
+		m.profilesList, cmd = m.profilesList.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -411,24 +468,76 @@ func (m model) View() string {
 		return fmt.Sprintf("\n\n   Error: %s\n\n", appTheme.errorMessageStyle(wrappedErrorMsg))
 	}
 
+	// Create profile indicator for top right corner
+	profileIndicator := ""
+	if m.currentProfile != "" {
+		profileStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("220")). // Yellow background
+			Foreground(lipgloss.Color("0")). // Black text
+			Bold(true).
+			Padding(0, 1)
+
+		profileText := fmt.Sprintf("Profile: %s", m.currentProfile)
+		profileIndicator = profileStyle.Render(profileText)
+	}
+
 	var view string
 
 	switch m.currentScreen {
 	case "roles":
-		view = "\n" + m.rolesList.View()
+		// Create header with profile indicator
+		header := ""
+		if profileIndicator != "" {
+			headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
+			if headerWidth > 0 {
+				spacer := strings.Repeat(" ", headerWidth)
+				header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+			} else {
+				header = fmt.Sprintf("%s\n", profileIndicator)
+			}
+		}
+
+		view = header + "\n" + m.rolesList.View()
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
+		view += "\n  press p to switch profiles • q to quit"
+
 	case "policies":
 		if m.selectedRole != nil {
-			view = "\n" + m.policiesList.View()
+			// Create header with profile indicator
+			header := ""
+			if profileIndicator != "" {
+				headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
+				if headerWidth > 0 {
+					spacer := strings.Repeat(" ", headerWidth)
+					header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+				} else {
+					header = fmt.Sprintf("%s\n", profileIndicator)
+				}
+			}
+
+			view = header + "\n" + m.policiesList.View()
 			if m.statusMsg != "" {
 				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 			}
-			view += "\n  press enter to view policy details • esc to go back • q to quit"
+			view += "\n  press enter to view policy details • p to switch profiles • esc to go back • q to quit"
 		}
+
 	case "policy_document":
 		if m.selectedPolicy != nil {
+			// Create header with profile indicator
+			header := ""
+			if profileIndicator != "" {
+				headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
+				if headerWidth > 0 {
+					spacer := strings.Repeat(" ", headerWidth)
+					header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+				} else {
+					header = fmt.Sprintf("%s\n", profileIndicator)
+				}
+			}
+
 			// Use the highlighted style for the policy name
 			headerStr := fmt.Sprintf("\n  %s\n", appTheme.policyNameHighlightStyle(m.selectedPolicy.policyName))
 			if m.selectedPolicy.policyType != "" {
@@ -438,9 +547,28 @@ func (m model) View() string {
 				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
-			helpStr := "\n\n  press o to open in editor • esc to go back • q to quit\n"
-			view = headerStr + m.policyView.View() + helpStr
+			helpStr := "\n\n  press o to open in editor • p to switch profiles • esc to go back • q to quit\n"
+			view = header + headerStr + m.policyView.View() + helpStr
 		}
+
+	case "profiles":
+		// Create header with profile indicator
+		header := ""
+		if profileIndicator != "" {
+			headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
+			if headerWidth > 0 {
+				spacer := strings.Repeat(" ", headerWidth)
+				header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+			} else {
+				header = fmt.Sprintf("%s\n", profileIndicator)
+			}
+		}
+
+		view = header + "\n" + m.profilesList.View()
+		if m.statusMsg != "" {
+			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
+		}
+		view += "\n  press enter to switch profile • esc to go back • q to quit"
 	}
 
 	return view
@@ -457,6 +585,11 @@ type policiesLoadedMsg struct {
 type policyDocumentLoadedMsg struct {
 	policyArn string
 	document  string
+}
+
+type profilesLoadedMsg struct {
+	profiles       []string
+	currentProfile string
 }
 
 type errorMsg error
@@ -856,4 +989,84 @@ func loadThemeFromConfig() (Theme, error) {
 	}
 
 	return theme, nil
+}
+
+// Load AWS profiles from config files
+func loadAWSProfilesCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Get home directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return errorMsg(fmt.Errorf("error getting home directory: %w", err))
+		}
+
+		// Read AWS config file
+		configPath := filepath.Join(homeDir, ".aws", "config")
+		credentialsPath := filepath.Join(homeDir, ".aws", "credentials")
+
+		profiles := make(map[string]bool)
+
+		// Parse config file
+		if file, err := os.Open(configPath); err == nil {
+			defer file.Close()
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if strings.HasPrefix(line, "[profile ") && strings.HasSuffix(line, "]") {
+					profileName := strings.TrimPrefix(line, "[profile ")
+					profileName = strings.TrimSuffix(profileName, "]")
+					profiles[profileName] = true
+				} else if line == "[default]" {
+					profiles["default"] = true
+				}
+			}
+		}
+
+		// Parse credentials file
+		if file, err := os.Open(credentialsPath); err == nil {
+			defer file.Close()
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+					profileName := strings.TrimPrefix(line, "[")
+					profileName = strings.TrimSuffix(profileName, "]")
+					profiles[profileName] = true
+				}
+			}
+		}
+
+		// Convert map to slice
+		var profileList []string
+		for profile := range profiles {
+			profileList = append(profileList, profile)
+		}
+
+		// Get current profile from environment or default
+		currentProfile := os.Getenv("AWS_PROFILE")
+		if currentProfile == "" {
+			currentProfile = "default"
+		}
+
+		return profilesLoadedMsg{
+			profiles:       profileList,
+			currentProfile: currentProfile,
+		}
+	}
+}
+
+// Load current AWS profile
+func loadCurrentProfileCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Get current profile from environment
+		currentProfile := os.Getenv("AWS_PROFILE")
+		if currentProfile == "" {
+			currentProfile = "default"
+		}
+
+		return profilesLoadedMsg{
+			profiles:       []string{}, // Empty list, we just set the current profile
+			currentProfile: currentProfile,
+		}
+	}
 }
