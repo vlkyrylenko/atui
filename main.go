@@ -493,7 +493,7 @@ func (m model) View() string {
 	if m.currentProfile != "" {
 		profileStyle := lipgloss.NewStyle().
 			Background(lipgloss.Color("220")). // Yellow background
-			Foreground(lipgloss.Color("0")).   // Black text
+			Foreground(lipgloss.Color("0")). // Black text
 			Bold(true).
 			Padding(0, 1)
 
@@ -906,7 +906,7 @@ func loadThemeFromConfig() (Theme, error) {
 		Foreground(appconfig.GetForegroundColor(cfg.Colors.SelectedItem))
 
 	theme.paginationStyle = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
-	theme.helpStyle = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
+	theme.helpStyle = list.DefaultStyles().HelpStyle.PaddingLeft(1).PaddingBottom(1)
 
 	theme.statusMessageStyle = func(msg string) string {
 		return lipgloss.NewStyle().
