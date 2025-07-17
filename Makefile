@@ -4,7 +4,7 @@
 
 APP_NAME = atui
 GO_PKG_NAME = 'atui'
-PROJECT_DIR = $(shell readlink -e .)
+PROJECT_DIR = $(shell readlink -e .) 
 
 ## Development Commands
 
