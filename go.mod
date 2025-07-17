@@ -1,4 +1,4 @@
-module atui
+module github.com/vlkyrylenko/atui
 
 go 1.23.0
 
