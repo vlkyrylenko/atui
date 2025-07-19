@@ -782,42 +782,52 @@ func (m model) View() string {
 
 	switch m.currentScreen {
 	case "roles":
-		// Create header with profile indicator
+		// Create header with logo and profile indicator on the same line
+		logo := displayLogo()
 		header := ""
 		if profileIndicator != "" {
-			headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
-			if headerWidth > 0 {
-				spacer := strings.Repeat(" ", headerWidth)
-				header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+			// Calculate spacing to put logo on left, profile on right
+			logoWidth := len(stripAnsiCodes(logo))
+			profileWidth := len(stripAnsiCodes(profileIndicator))
+			spacerWidth := m.width - logoWidth - profileWidth - 2
+			if spacerWidth > 0 {
+				spacer := strings.Repeat(" ", spacerWidth)
+				header = fmt.Sprintf("%s%s%s\n", logo, spacer, profileIndicator)
 			} else {
-				header = fmt.Sprintf("%s\n", profileIndicator)
+				// Not enough space, put on separate lines
+				header = fmt.Sprintf("%s\n%s\n", logo, profileIndicator)
 			}
+		} else {
+			header = fmt.Sprintf("%s\n", logo)
 		}
 
-		// Add logo above the list
-		logo := displayLogo()
-		view = header + "\n" + logo + "\n\n" + m.rolesList.View()
+		view = header + "\n" + m.rolesList.View()
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
 
 	case "policies":
 		if m.selectedRole != nil {
-			// Create header with profile indicator
+			// Create header with logo and profile indicator on the same line
+			logo := displayLogo()
 			header := ""
 			if profileIndicator != "" {
-				headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
-				if headerWidth > 0 {
-					spacer := strings.Repeat(" ", headerWidth)
-					header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+				// Calculate spacing to put logo on left, profile on right
+				logoWidth := len(stripAnsiCodes(logo))
+				profileWidth := len(stripAnsiCodes(profileIndicator))
+				spacerWidth := m.width - logoWidth - profileWidth - 2
+				if spacerWidth > 0 {
+					spacer := strings.Repeat(" ", spacerWidth)
+					header = fmt.Sprintf("%s%s%s\n", logo, spacer, profileIndicator)
 				} else {
-					header = fmt.Sprintf("%s\n", profileIndicator)
+					// Not enough space, put on separate lines
+					header = fmt.Sprintf("%s\n%s\n", logo, profileIndicator)
 				}
+			} else {
+				header = fmt.Sprintf("%s\n", logo)
 			}
 
-			// Add logo above the policies list
-			logo := displayLogo()
-			view = header + "\n" + logo + "\n\n" + m.policiesList.View()
+			view = header + "\n" + m.policiesList.View()
 			if m.statusMsg != "" {
 				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 			}
@@ -882,21 +892,26 @@ func (m model) View() string {
 		}
 
 	case "profiles":
-		// Create header with profile indicator
+		// Create header with logo and profile indicator on the same line
+		logo := displayLogo()
 		header := ""
 		if profileIndicator != "" {
-			headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
-			if headerWidth > 0 {
-				spacer := strings.Repeat(" ", headerWidth)
-				header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+			// Calculate spacing to put logo on left, profile on right
+			logoWidth := len(stripAnsiCodes(logo))
+			profileWidth := len(stripAnsiCodes(profileIndicator))
+			spacerWidth := m.width - logoWidth - profileWidth - 2
+			if spacerWidth > 0 {
+				spacer := strings.Repeat(" ", spacerWidth)
+				header = fmt.Sprintf("%s%s%s\n", logo, spacer, profileIndicator)
 			} else {
-				header = fmt.Sprintf("%s\n", profileIndicator)
+				// Not enough space, put on separate lines
+				header = fmt.Sprintf("%s\n%s\n", logo, profileIndicator)
 			}
+		} else {
+			header = fmt.Sprintf("%s\n", logo)
 		}
 
-		// Add logo above the profiles list
-		logo := displayLogo()
-		view = header + "\n" + logo + "\n\n" + m.profilesList.View()
+		view = header + "\n" + m.profilesList.View()
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
