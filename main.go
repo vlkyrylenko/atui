@@ -134,14 +134,28 @@ type keyMap struct {
 	Quit          key.Binding
 }
 
+// ShortHelp returns the short help for keybindings
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Down, k.SwitchProfile, k.Back, k.Quit}
+}
+
+// FullHelp returns the full help for keybindings
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down},
+		{k.Enter, k.SwitchProfile},
+		{k.Back, k.Quit},
+	}
+}
+
 var keys = keyMap{
 	Up: key.NewBinding(
 		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "move up"),
+		key.WithHelp("↑/k", "up"),
 	),
 	Down: key.NewBinding(
 		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "move down"),
+		key.WithHelp("↓/j", "down"),
 	),
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),
@@ -149,16 +163,48 @@ var keys = keyMap{
 	),
 	Back: key.NewBinding(
 		key.WithKeys("escape", "esc"),
-		key.WithHelp("esc", "back"),
+		key.WithHelp("esc", "go back"),
 	),
 	SwitchProfile: key.NewBinding(
 		key.WithKeys("p"),
-		key.WithHelp("p", "switch profile"),
+		key.WithHelp("p", "switch profiles"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
-		key.WithHelp("q/ctrl+c", "quit"),
+		key.WithHelp("q", "quit"),
 	),
+}
+
+// updateKeyBindingsForScreen updates the help text for key bindings based on the current screen
+func updateKeyBindingsForScreen(currentScreen string) {
+	switch currentScreen {
+	case "roles":
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "select role"),
+		)
+	case "policies":
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "view policy details"),
+		)
+	case "policy_document":
+		// Enter key is not used in policy document view, so we can hide it or keep generic
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "select"),
+		)
+	case "profiles":
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "switch profile"),
+		)
+	default:
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "select"),
+		)
+	}
 }
 
 // Initialize the model
@@ -175,6 +221,13 @@ func initialModel() model {
 	rolesList.Styles.Title = appTheme.titleStyle
 	rolesList.Styles.PaginationStyle = appTheme.paginationStyle
 	rolesList.Styles.HelpStyle = appTheme.helpStyle
+	// Set custom key bindings
+	rolesList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
+	rolesList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
 	// Disable default list keybindings for Escape key
 	rolesList.KeyMap.Quit.SetKeys("ctrl+c")
 	rolesList.KeyMap.CloseFullHelp.SetKeys("q")
@@ -195,6 +248,13 @@ func initialModel() model {
 	policiesList.Styles.Title = appTheme.titleStyle
 	policiesList.Styles.PaginationStyle = appTheme.paginationStyle
 	policiesList.Styles.HelpStyle = appTheme.helpStyle
+	// Set custom key bindings
+	policiesList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
+	policiesList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
 	// Disable default list keybindings for Escape key
 	policiesList.KeyMap.Quit.SetKeys("ctrl+c")
 	policiesList.KeyMap.CloseFullHelp.SetKeys("q")
@@ -209,6 +269,13 @@ func initialModel() model {
 	profilesList.Styles.Title = appTheme.titleStyle
 	profilesList.Styles.PaginationStyle = appTheme.paginationStyle
 	profilesList.Styles.HelpStyle = appTheme.helpStyle
+	// Set custom key bindings
+	profilesList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.Back}
+	}
+	profilesList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.Back}
+	}
 	// Disable default list keybindings for Escape key
 	profilesList.KeyMap.Quit.SetKeys("ctrl+c")
 	profilesList.KeyMap.CloseFullHelp.SetKeys("q")
@@ -226,6 +293,8 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
+	// Set initial key bindings for the starting screen
+	updateKeyBindingsForScreen("roles")
 	return tea.Batch(
 		m.spinner.Tick,
 		loadCurrentProfileCmd(),
@@ -246,15 +315,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEsc {
 			if m.currentScreen == "profiles" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policies" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.selectedPolicy = nil
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policy_document" {
 				m.currentScreen = "policies"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			}
@@ -267,6 +339,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.SwitchProfile):
 			if m.currentScreen != "profiles" {
 				m.currentScreen = "profiles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.loading = true
 				// Ensure profiles list is properly sized
 				headerHeight := 6
@@ -279,15 +352,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Back):
 			if m.currentScreen == "profiles" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policies" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.selectedPolicy = nil
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policy_document" {
 				m.currentScreen = "policies"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			}
@@ -301,6 +377,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selected, ok := m.rolesList.SelectedItem().(*RoleItem); ok {
 					m.selectedRole = selected
 					m.currentScreen = "policies"
+					updateKeyBindingsForScreen(m.currentScreen)
 					m.policiesList.Title = fmt.Sprintf("Policies for %s", m.selectedRole.roleName)
 					m.statusMsg = ""
 
@@ -335,6 +412,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selected, ok := m.policiesList.SelectedItem().(*PolicyItem); ok {
 					m.selectedPolicy = selected
 					m.currentScreen = "policy_document"
+					updateKeyBindingsForScreen(m.currentScreen)
 					m.statusMsg = ""
 
 					if !m.selectedPolicy.documentLoaded {
@@ -521,7 +599,6 @@ func (m model) View() string {
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
-		view += "\n  press p to switch profiles • q to quit"
 
 	case "policies":
 		if m.selectedRole != nil {
@@ -541,7 +618,6 @@ func (m model) View() string {
 			if m.statusMsg != "" {
 				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 			}
-			view += "\n  press enter to view policy details • p to switch profiles • esc to go back • q to quit"
 		}
 
 	case "policy_document":
@@ -567,8 +643,7 @@ func (m model) View() string {
 				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
-			helpStr := "\n\n  press p to switch profiles • esc to go back • q to quit\n"
-			view = header + headerStr + m.policyView.View() + helpStr
+			view = header + headerStr + m.policyView.View()
 		}
 
 	case "profiles":
@@ -588,7 +663,6 @@ func (m model) View() string {
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
-		view += "\n  press enter to switch profile • esc to go back • q to quit"
 	}
 
 	return view
