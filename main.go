@@ -481,6 +481,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					updateKeyBindingsForScreen(m.currentScreen)
 					m.statusMsg = ""
 
+					// Reset search state when switching policy documents
+					m.searchMode = false
+					m.searchQuery = ""
+					m.searchResults = []int{}
+					m.currentMatch = 0
+
 					if !m.selectedPolicy.documentLoaded {
 						m.loading = true
 						m.statusMsg = fmt.Sprintf("Loading policy document for %s...", m.selectedPolicy.policyName)
@@ -968,7 +974,7 @@ func (m *model) highlightSearchResults(content, query string, currentMatchIndex 
 		Bold(true)
 
 	currentMatchStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("196")). // Bright red background
+		Background(lipgloss.Color("201")). // Bright magenta background
 		Foreground(lipgloss.Color("15")). // White text
 		Bold(true)
 
