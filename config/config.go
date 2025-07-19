@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -18,7 +17,6 @@ type ThemeColors struct {
 	Status          string `json:"status"`          // Status message color
 	Error           string `json:"error"`           // Error message color
 	PolicyInfo      string `json:"policyInfo"`      // Policy info color
-	HelpInfo        string `json:"helpInfo"`        // Help info color
 	PolicyNameFg    string `json:"policyNameFg"`    // Policy name foreground color
 	PolicyNameBg    string `json:"policyNameBg"`    // Policy name background color
 	PolicyMetadata  string `json:"policyMetadata"`  // Policy metadata color (Type & ARN)
@@ -29,8 +27,7 @@ type ThemeColors struct {
 
 // Config holds application configuration
 type Config struct {
-	Colors              ThemeColors `json:"colors"`
-	KeybindingSeparator string      `json:"keybindingSeparator"` // Separator between key and description in help text
+	Colors ThemeColors `json:"colors"`
 }
 
 // Default configuration
@@ -42,7 +39,6 @@ var DefaultConfig = Config{
 		Status:          "#04B575",
 		Error:           "#FF0000",
 		PolicyInfo:      "#AAAAAA",
-		HelpInfo:        "#FF00FF",
 		PolicyNameFg:    "39",  // Bright cyan
 		PolicyNameBg:    "236", // Dark background
 		PolicyMetadata:  "220", // Yellow
@@ -50,7 +46,6 @@ var DefaultConfig = Config{
 		JsonServiceName: "35",  // Pink
 		Debug:           "#FF00FF",
 	},
-	KeybindingSeparator: " - ", // Default separator
 }
 
 // Load reads config from file or creates a default if not exist
@@ -128,7 +123,7 @@ func (c *Config) GetTheme() *Theme {
 		itemStyle:         lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.Item)),
 		selectedItemStyle: lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.SelectedItem)),
 		paginationStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.PolicyInfo)),
-		helpStyle:         lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.HelpInfo)),
+		helpStyle:         lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.PolicyInfo)),
 		statusMessageStyle: func(s string) string {
 			return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Colors.Status)).Render(s)
 		},
@@ -165,17 +160,4 @@ func GetForegroundColor(colorStr string) lipgloss.Color {
 		return lipgloss.Color("")
 	}
 	return lipgloss.Color(colorStr)
-}
-
-// CreateKeybinding creates a key binding with the configured separator
-func (c *Config) CreateKeybinding(keys []string, keyDisplay, description string) key.Binding {
-	separator := c.KeybindingSeparator
-	if separator == "" {
-		separator = " - " // fallback to default
-	}
-
-	return key.NewBinding(
-		key.WithKeys(keys...),
-		key.WithHelp(keyDisplay, separator+description),
-	)
 }

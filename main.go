@@ -41,18 +41,88 @@ type Theme struct {
 	debugStyle               func(string) string
 }
 
-// Constants
-const (
-// Remove the hardcoded separator - now it comes from config
-)
-
-// Global config variable
-var appConfig *appconfig.Config
-
 // Styles
 var (
 	appTheme Theme
 )
+
+// Model holds the application state
+type model struct {
+	rolesList         list.Model
+	policiesList      list.Model
+	loading           bool
+	spinner           spinner.Model
+	selectedRole      *RoleItem
+	policyView        viewport.Model
+	selectedPolicy    *PolicyItem
+	policyDocument    string
+	currentScreen     string
+	err               error
+	width, height     int
+	statusMsg         string
+	currentProfile    string
+	availableProfiles []string
+	profilesList      list.Model
+}
+
+// RoleItem represents an IAM role
+type RoleItem struct {
+	roleName       string
+	roleArn        string
+	description    string
+	policies       []PolicyItem
+	policiesLoaded bool
+	policyCount    int // Add count of policies
+}
+
+// PolicyItem represents an IAM policy
+type PolicyItem struct {
+	policyName     string
+	policyArn      string
+	policyType     string // Added policy type (AWS managed vs Customer managed)
+	policyDocument string
+	documentLoaded bool
+}
+
+func (i RoleItem) Title() string { return i.roleName }
+func (i RoleItem) Description() string {
+	desc := i.description
+	if i.policiesLoaded {
+		desc += fmt.Sprintf(" | %d policies attached", len(i.policies))
+	}
+	return desc
+}
+func (i RoleItem) FilterValue() string { return i.roleName }
+
+func (i PolicyItem) Title() string {
+	// Make the title more prominent by adding a symbol
+	return "📄 " + i.policyName
+}
+
+func (i PolicyItem) Description() string {
+	desc := ""
+	if i.policyType == "AWS" {
+		desc = "[AWS Managed] "
+	} else if i.policyType == "Customer" {
+		desc = "[Customer Managed] "
+	} else if i.policyType == "Inline" {
+		desc = "[Inline] "
+	}
+
+	// For the test to pass, we need to show the policy name directly
+	desc += i.policyName
+	return desc
+}
+func (i PolicyItem) FilterValue() string { return i.policyName }
+
+// ProfileItem represents an AWS profile for the list
+type ProfileItem struct {
+	name string
+}
+
+func (i ProfileItem) Title() string       { return i.name }
+func (i ProfileItem) Description() string { return "" }
+func (i ProfileItem) FilterValue() string { return i.name }
 
 // Key mappings
 type keyMap struct {
@@ -64,7 +134,32 @@ type keyMap struct {
 	Quit          key.Binding
 }
 
-var keys keyMap
+var keys = keyMap{
+	Up: key.NewBinding(
+		key.WithKeys("up", "k"),
+		key.WithHelp("↑/k", "move up"),
+	),
+	Down: key.NewBinding(
+		key.WithKeys("down", "j"),
+		key.WithHelp("↓/j", "move down"),
+	),
+	Enter: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "select"),
+	),
+	Back: key.NewBinding(
+		key.WithKeys("escape", "esc"),
+		key.WithHelp("esc", "back"),
+	),
+	SwitchProfile: key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", "switch profile"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q/ctrl+c", "quit"),
+	),
+}
 
 // Initialize the model
 func initialModel() model {
@@ -77,19 +172,9 @@ func initialModel() model {
 	rolesList.Title = "AWS IAM Roles"
 	rolesList.SetShowStatusBar(false)
 	rolesList.SetFilteringEnabled(true)
-	rolesList.SetShowHelp(true) // Enable built-in help
 	rolesList.Styles.Title = appTheme.titleStyle
 	rolesList.Styles.PaginationStyle = appTheme.paginationStyle
 	rolesList.Styles.HelpStyle = appTheme.helpStyle
-
-	// Add custom key bindings to the roles list help
-	rolesList.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.SwitchProfile}
-	}
-	rolesList.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.SwitchProfile}
-	}
-
 	// Disable default list keybindings for Escape key
 	rolesList.KeyMap.Quit.SetKeys("ctrl+c")
 	rolesList.KeyMap.CloseFullHelp.SetKeys("q")
@@ -107,19 +192,9 @@ func initialModel() model {
 	policiesList.Title = "Policies"
 	policiesList.SetShowStatusBar(false)
 	policiesList.SetFilteringEnabled(true)
-	policiesList.SetShowHelp(true) // Enable built-in help
 	policiesList.Styles.Title = appTheme.titleStyle
 	policiesList.Styles.PaginationStyle = appTheme.paginationStyle
 	policiesList.Styles.HelpStyle = appTheme.helpStyle
-
-	// Add custom key bindings to the policies list help
-	policiesList.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
-	}
-	policiesList.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
-	}
-
 	// Disable default list keybindings for Escape key
 	policiesList.KeyMap.Quit.SetKeys("ctrl+c")
 	policiesList.KeyMap.CloseFullHelp.SetKeys("q")
@@ -131,19 +206,9 @@ func initialModel() model {
 	profilesList.Title = "AWS Profiles"
 	profilesList.SetShowStatusBar(false)
 	profilesList.SetFilteringEnabled(true)
-	profilesList.SetShowHelp(true) // Enable built-in help
 	profilesList.Styles.Title = appTheme.titleStyle
 	profilesList.Styles.PaginationStyle = appTheme.paginationStyle
 	profilesList.Styles.HelpStyle = appTheme.helpStyle
-
-	// Add custom key bindings to the profiles list help
-	profilesList.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Enter, keys.Back}
-	}
-	profilesList.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{keys.Enter, keys.Back}
-	}
-
 	// Disable default list keybindings for Escape key
 	profilesList.KeyMap.Quit.SetKeys("ctrl+c")
 	profilesList.KeyMap.CloseFullHelp.SetKeys("q")
@@ -456,6 +521,7 @@ func (m model) View() string {
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
+		view += "\n  press p to switch profiles • q to quit"
 
 	case "policies":
 		if m.selectedRole != nil {
@@ -475,6 +541,7 @@ func (m model) View() string {
 			if m.statusMsg != "" {
 				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 			}
+			view += "\n  press enter to view policy details • p to switch profiles • esc to go back • q to quit"
 		}
 
 	case "policy_document":
@@ -500,7 +567,8 @@ func (m model) View() string {
 				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
-			view = header + headerStr + m.policyView.View()
+			helpStr := "\n\n  press p to switch profiles • esc to go back • q to quit\n"
+			view = header + headerStr + m.policyView.View() + helpStr
 		}
 
 	case "profiles":
@@ -520,6 +588,7 @@ func (m model) View() string {
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
+		view += "\n  press enter to switch profile • esc to go back • q to quit"
 	}
 
 	return view
@@ -794,17 +863,8 @@ func wordWrap(text string, maxWidth int) string {
 }
 
 func main() {
-	// Load configuration first
-	var err error
-	appConfig, err = appconfig.Load()
-	if err != nil {
-		log.Fatalf("error loading config: %v", err)
-	}
-
-	// Initialize keys using the loaded config
-	keys = initializeKeys(appConfig)
-
 	// Load the color theme from the config file
+	var err error
 	appTheme, err = loadThemeFromConfig()
 	if err != nil {
 		log.Fatalf("error loading theme from config: %v", err)
@@ -813,18 +873,6 @@ func main() {
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		log.Fatal(err)
-	}
-}
-
-// initializeKeys creates keybindings using the configuration
-func initializeKeys(cfg *appconfig.Config) keyMap {
-	return keyMap{
-		Up:            cfg.CreateKeybinding([]string{"up", "k"}, "↑/k", "up"),
-		Down:          cfg.CreateKeybinding([]string{"down", "j"}, "↓/j", "down"),
-		Enter:         cfg.CreateKeybinding([]string{"enter"}, "enter", "open policy"),
-		Back:          cfg.CreateKeybinding([]string{"escape", "esc"}, "esc", "back"),
-		SwitchProfile: cfg.CreateKeybinding([]string{"p"}, "p", "switch profile"),
-		Quit:          cfg.CreateKeybinding([]string{"q", "ctrl+c"}, "q", "quit"),
 	}
 }
 
