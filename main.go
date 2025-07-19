@@ -5,13 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"net/url"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -22,6 +15,12 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"log"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	appconfig "github.com/vlkyrylenko/atui/config"
 )
@@ -795,7 +794,9 @@ func (m model) View() string {
 			}
 		}
 
-		view = header + "\n" + m.rolesList.View()
+		// Add logo above the list
+		logo := displayLogo()
+		view = header + "\n" + logo + "\n\n" + m.rolesList.View()
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
@@ -814,7 +815,9 @@ func (m model) View() string {
 				}
 			}
 
-			view = header + "\n" + m.policiesList.View()
+			// Add logo above the policies list
+			logo := displayLogo()
+			view = header + "\n" + logo + "\n\n" + m.policiesList.View()
 			if m.statusMsg != "" {
 				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 			}
@@ -891,7 +894,9 @@ func (m model) View() string {
 			}
 		}
 
-		view = header + "\n" + m.profilesList.View()
+		// Add logo above the profiles list
+		logo := displayLogo()
+		view = header + "\n" + logo + "\n\n" + m.profilesList.View()
 		if m.statusMsg != "" {
 			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
 		}
@@ -1271,6 +1276,12 @@ func wordWrap(text string, maxWidth int) string {
 	}
 
 	return result.String()
+}
+
+// displayLogo returns a simple colorful logo for display in the UI
+func displayLogo() string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
+	return style.Render("🌈 AWS Terminal UI 🌈")
 }
 
 func main() {
