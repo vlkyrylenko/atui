@@ -283,7 +283,14 @@ func initialModel() model {
 	rolesList.Title = "AWS IAM Roles"
 	rolesList.SetShowStatusBar(false)
 	rolesList.SetFilteringEnabled(true)
-	rolesList.Styles.Title = appTheme.titleStyle
+	// Create boxed title style
+	boxedTitleStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("99")). // Purple background to match logo
+		Foreground(lipgloss.Color("15")). // White text
+		Bold(true).
+		Padding(0, 1).
+		MarginLeft(2)
+	rolesList.Styles.Title = boxedTitleStyle
 	rolesList.Styles.PaginationStyle = appTheme.paginationStyle
 	rolesList.Styles.HelpStyle = appTheme.helpStyle
 	// Set custom key bindings
@@ -293,7 +300,6 @@ func initialModel() model {
 	rolesList.AdditionalFullHelpKeys = func() []key.Binding {
 		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
 	}
-	// Disable default list keybindings for Escape key
 	rolesList.KeyMap.Quit.SetKeys("ctrl+c")
 	rolesList.KeyMap.CloseFullHelp.SetKeys("q")
 
@@ -310,7 +316,7 @@ func initialModel() model {
 	policiesList.Title = "Policies"
 	policiesList.SetShowStatusBar(false)
 	policiesList.SetFilteringEnabled(true)
-	policiesList.Styles.Title = appTheme.titleStyle
+	policiesList.Styles.Title = boxedTitleStyle
 	policiesList.Styles.PaginationStyle = appTheme.paginationStyle
 	policiesList.Styles.HelpStyle = appTheme.helpStyle
 	// Set custom key bindings
@@ -320,7 +326,6 @@ func initialModel() model {
 	policiesList.AdditionalFullHelpKeys = func() []key.Binding {
 		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
 	}
-	// Disable default list keybindings for Escape key
 	policiesList.KeyMap.Quit.SetKeys("ctrl+c")
 	policiesList.KeyMap.CloseFullHelp.SetKeys("q")
 
@@ -331,7 +336,7 @@ func initialModel() model {
 	profilesList.Title = "AWS Profiles"
 	profilesList.SetShowStatusBar(false)
 	profilesList.SetFilteringEnabled(true)
-	profilesList.Styles.Title = appTheme.titleStyle
+	profilesList.Styles.Title = boxedTitleStyle
 	profilesList.Styles.PaginationStyle = appTheme.paginationStyle
 	profilesList.Styles.HelpStyle = appTheme.helpStyle
 	// Set custom key bindings
@@ -341,7 +346,6 @@ func initialModel() model {
 	profilesList.AdditionalFullHelpKeys = func() []key.Binding {
 		return []key.Binding{keys.Enter, keys.Back}
 	}
-	// Disable default list keybindings for Escape key
 	profilesList.KeyMap.Quit.SetKeys("ctrl+c")
 	profilesList.KeyMap.CloseFullHelp.SetKeys("q")
 
