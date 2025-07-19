@@ -132,6 +132,13 @@ type keyMap struct {
 	Back          key.Binding
 	SwitchProfile key.Binding
 	Quit          key.Binding
+	// Viewport-specific key bindings
+	PageUp       key.Binding
+	PageDown     key.Binding
+	HalfPageUp   key.Binding
+	HalfPageDown key.Binding
+	GotoTop      key.Binding
+	GotoBottom   key.Binding
 }
 
 // ShortHelp returns the short help for keybindings
@@ -144,6 +151,20 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},
 		{k.Enter, k.SwitchProfile},
+		{k.Back, k.Quit},
+	}
+}
+
+// ViewportShortHelp returns short help for viewport screen
+func (k keyMap) ViewportShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Down, k.PageUp, k.PageDown, k.Back, k.Quit}
+}
+
+// ViewportFullHelp returns full help for viewport screen
+func (k keyMap) ViewportFullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down, k.PageUp, k.PageDown},
+		{k.HalfPageUp, k.HalfPageDown, k.GotoTop, k.GotoBottom},
 		{k.Back, k.Quit},
 	}
 }
@@ -172,6 +193,31 @@ var keys = keyMap{
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
+	),
+	// Viewport-specific key bindings
+	PageUp: key.NewBinding(
+		key.WithKeys("pgup"),
+		key.WithHelp("pgup", "scroll up"),
+	),
+	PageDown: key.NewBinding(
+		key.WithKeys("pgdn"),
+		key.WithHelp("pgdn", "scroll down"),
+	),
+	HalfPageUp: key.NewBinding(
+		key.WithKeys("shift+pgup"),
+		key.WithHelp("shift+pgup", "scroll half page up"),
+	),
+	HalfPageDown: key.NewBinding(
+		key.WithKeys("shift+pgdn"),
+		key.WithHelp("shift+pgdn", "scroll half page down"),
+	),
+	GotoTop: key.NewBinding(
+		key.WithKeys("home"),
+		key.WithHelp("home", "go to top"),
+	),
+	GotoBottom: key.NewBinding(
+		key.WithKeys("end"),
+		key.WithHelp("end", "go to bottom"),
 	),
 }
 
@@ -436,8 +482,57 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		}
 
+		// Handle viewport-specific key bindings
+		case key.Matches(msg, keys.PageUp):
+			if m.currentScreen == "policy_document" {
+				m.policyView.ViewUp()
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.PageDown):
+			if m.currentScreen == "policy_document" {
+				m.policyView.ViewDown()
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.HalfPageUp):
+			if m.currentScreen == "policy_document" {
+				m.policyView.HalfViewUp()
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.HalfPageDown):
+			if m.currentScreen == "policy_document" {
+				m.policyView.HalfViewDown()
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.GotoTop):
+			if m.currentScreen == "policy_document" {
+				m.policyView.GotoTop()
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.GotoBottom):
+			if m.currentScreen == "policy_document" {
+				m.policyView.GotoBottom()
+				return m, nil
+			}
+
+		// Handle up/down keys for viewport
+		case key.Matches(msg, keys.Up):
+			if m.currentScreen == "policy_document" {
+				m.policyView.LineUp(1)
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.Down):
+			if m.currentScreen == "policy_document" {
+				m.policyView.LineDown(1)
+				return m, nil
+			}
+		}
 	case tea.WindowSizeMsg:
 		m.height = msg.Height
 		m.width = msg.Width
@@ -644,7 +739,10 @@ func (m model) View() string {
 			}
 			headerStr += "\n"
 
-			view = header + headerStr + m.policyView.View()
+			// Add help bar at the bottom
+			helpBar := "\n" + renderViewportHelpBar()
+
+			view = header + headerStr + m.policyView.View() + helpBar
 		}
 
 	case "profiles":
@@ -667,6 +765,23 @@ func (m model) View() string {
 	}
 
 	return view
+}
+
+// renderViewportHelpBar renders a help bar for viewport navigation
+func renderViewportHelpBar() string {
+	helpKeys := keys.ViewportShortHelp()
+	var helpStrings []string
+
+	for _, binding := range helpKeys {
+		helpStrings = append(helpStrings, fmt.Sprintf("%s %s", binding.Help().Key, binding.Help().Desc))
+	}
+
+	helpText := strings.Join(helpStrings, " • ")
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		PaddingLeft(1)
+
+	return helpStyle.Render(helpText)
 }
 
 // Custom messages for handling asynchronous operations
