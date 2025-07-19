@@ -643,6 +643,7 @@ func (m model) View() string {
 				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
+
 			view = header + headerStr + m.policyView.View()
 		}
 
