@@ -62,6 +62,7 @@ type model struct {
 	currentProfile    string
 	availableProfiles []string
 	profilesList      list.Model
+	userArn           string // Store current user ARN
 	// Viewport search functionality
 	searchMode    bool
 	searchQuery   string
@@ -368,6 +369,7 @@ func (m model) Init() tea.Cmd {
 		m.spinner.Tick,
 		loadCurrentProfileCmd(),
 		loadIAMRolesCmd(),
+		loadUserArnCmd(),
 	)
 }
 
@@ -725,6 +727,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.profilesList.SetItems(items)
 		return m, nil
 
+	case userArnLoadedMsg:
+		m.userArn = msg.arn
+		return m, nil
+
 	case spinner.TickMsg:
 		var spinnerCmd tea.Cmd
 		m.spinner, spinnerCmd = m.spinner.Update(msg)
@@ -780,6 +786,18 @@ func (m model) View() string {
 
 		profileText := fmt.Sprintf("Profile: %s", m.currentProfile)
 		profileIndicator = profileStyle.Render(profileText)
+	}
+
+	// Create user ARN display for bottom of screen with light translucent green highlighting
+	userArnDisplay := ""
+	if m.userArn != "" {
+		userArnStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("42")). // Light green background
+			Foreground(lipgloss.Color("0")). // Black text
+			Padding(0, 1)
+
+		userArnText := fmt.Sprintf("Current user ARN: %s", m.userArn)
+		userArnDisplay = userArnStyle.Render(userArnText)
 	}
 
 	var view string
@@ -921,6 +939,11 @@ func (m model) View() string {
 		}
 	}
 
+	// Add user ARN display at the bottom of all screens
+	if userArnDisplay != "" {
+		view += "\n" + userArnDisplay
+	}
+
 	return view
 }
 
@@ -1047,6 +1070,10 @@ type profilesLoadedMsg struct {
 	currentProfile string
 }
 
+type userArnLoadedMsg struct {
+	arn string
+}
+
 type errorMsg error
 
 // Load IAM roles from AWS
@@ -1062,16 +1089,6 @@ func loadIAMRolesCmd() tea.Cmd {
 
 		// Create clients
 		iamClient := iam.NewFromConfig(cfg)
-		stsClient := sts.NewFromConfig(cfg)
-
-		// Get caller identity to determine current user/role
-		identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
-		if err != nil {
-			return errorMsg(fmt.Errorf("error getting caller identity: %w", err))
-		}
-
-		userArn := aws.ToString(identity.Arn)
-		fmt.Println("Current user ARN:", userArn)
 
 		// List IAM roles
 		var roles []RoleItem
@@ -1097,6 +1114,31 @@ func loadIAMRolesCmd() tea.Cmd {
 		}
 
 		return rolesLoadedMsg(roles)
+	}
+}
+
+// Load current user ARN
+func loadUserArnCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Load AWS configuration with shared config
+		cfg, err := config.LoadDefaultConfig(ctx)
+		if err != nil {
+			return errorMsg(fmt.Errorf("error loading AWS configuration: %w", err))
+		}
+
+		// Create STS client
+		stsClient := sts.NewFromConfig(cfg)
+
+		// Get caller identity to determine current user/role
+		identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		if err != nil {
+			return errorMsg(fmt.Errorf("error getting caller identity: %w", err))
+		}
+
+		userArn := aws.ToString(identity.Arn)
+		return userArnLoadedMsg{arn: userArn}
 	}
 }
 
