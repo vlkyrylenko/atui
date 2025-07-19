@@ -63,6 +63,11 @@ type model struct {
 	currentProfile    string
 	availableProfiles []string
 	profilesList      list.Model
+	// Viewport search functionality
+	searchMode    bool
+	searchQuery   string
+	searchResults []int // Line numbers containing matches
+	currentMatch  int   // Current match index
 }
 
 // RoleItem represents an IAM role
@@ -139,6 +144,9 @@ type keyMap struct {
 	HalfPageDown key.Binding
 	GotoTop      key.Binding
 	GotoBottom   key.Binding
+	Search       key.Binding // Search in viewport
+	NextMatch    key.Binding // Navigate to next search match
+	PrevMatch    key.Binding // Navigate to previous search match
 }
 
 // ShortHelp returns the short help for keybindings
@@ -157,7 +165,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 // ViewportShortHelp returns short help for viewport screen
 func (k keyMap) ViewportShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.PageUp, k.PageDown, k.Back, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.PageUp, k.PageDown, k.Search, k.NextMatch, k.PrevMatch, k.Back, k.Quit}
 }
 
 // ViewportFullHelp returns full help for viewport screen
@@ -218,6 +226,18 @@ var keys = keyMap{
 	GotoBottom: key.NewBinding(
 		key.WithKeys("end"),
 		key.WithHelp("end", "go to bottom"),
+	),
+	Search: key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "search"),
+	),
+	NextMatch: key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "next match"),
+	),
+	PrevMatch: key.NewBinding(
+		key.WithKeys("N"),
+		key.WithHelp("N", "previous match"),
 	),
 }
 
@@ -484,8 +504,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		// Handle viewport-specific key bindings
+		case key.Matches(msg, keys.Search):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				m.searchMode = true
+				m.searchQuery = ""
+				m.searchResults = []int{}
+				m.currentMatch = 0
+				return m, nil
+			}
+
 		case key.Matches(msg, keys.PageUp):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				m.policyView.YOffset -= m.policyView.Height
 				if m.policyView.YOffset < 0 {
 					m.policyView.YOffset = 0
@@ -494,7 +523,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.PageDown):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				m.policyView.YOffset += m.policyView.Height
 				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
 				if m.policyView.YOffset > maxOffset {
@@ -504,7 +533,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.HalfPageUp):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				m.policyView.YOffset -= m.policyView.Height / 2
 				if m.policyView.YOffset < 0 {
 					m.policyView.YOffset = 0
@@ -513,7 +542,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.HalfPageDown):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				m.policyView.YOffset += m.policyView.Height / 2
 				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
 				if m.policyView.YOffset > maxOffset {
@@ -523,13 +552,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.GotoTop):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				m.policyView.YOffset = 0
 				return m, nil
 			}
 
 		case key.Matches(msg, keys.GotoBottom):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
 				if maxOffset < 0 {
 					maxOffset = 0
@@ -538,9 +567,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		// Handle search result navigation
+		case key.Matches(msg, keys.NextMatch):
+			if m.currentScreen == "policy_document" && len(m.searchResults) > 0 {
+				m.currentMatch = (m.currentMatch + 1) % len(m.searchResults)
+				m.policyView.YOffset = m.searchResults[m.currentMatch]
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.PrevMatch):
+			if m.currentScreen == "policy_document" && len(m.searchResults) > 0 {
+				m.currentMatch = (m.currentMatch - 1 + len(m.searchResults)) % len(m.searchResults)
+				m.policyView.YOffset = m.searchResults[m.currentMatch]
+				return m, nil
+			}
+
 		// Handle up/down keys for viewport
 		case key.Matches(msg, keys.Up):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				if m.policyView.YOffset > 0 {
 					m.policyView.YOffset--
 				}
@@ -548,10 +592,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.Down):
-			if m.currentScreen == "policy_document" {
+			if m.currentScreen == "policy_document" && !m.searchMode {
 				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
 				if m.policyView.YOffset < maxOffset {
 					m.policyView.YOffset++
+				}
+				return m, nil
+			}
+		}
+
+		// Handle search mode input
+		if m.searchMode && m.currentScreen == "policy_document" {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.searchMode = false
+				m.searchQuery = ""
+				m.searchResults = []int{}
+				m.currentMatch = 0
+				return m, nil
+			case tea.KeyEnter:
+				if m.searchQuery != "" {
+					m.performSearch()
+					if len(m.searchResults) > 0 {
+						// Jump to first match
+						m.policyView.YOffset = m.searchResults[0]
+					}
+				}
+				m.searchMode = false
+				return m, nil
+			case tea.KeyBackspace:
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				}
+				return m, nil
+			default:
+				if len(msg.String()) == 1 && msg.String() >= " " {
+					m.searchQuery += msg.String()
 				}
 				return m, nil
 			}
@@ -762,10 +838,38 @@ func (m model) View() string {
 			}
 			headerStr += "\n"
 
-			// Add help bar at the bottom
-			helpBar := "\n" + renderViewportHelpBar()
+			// Add help bar at the bottom - show search help when in search mode
+			helpBar := "\n"
+			if m.searchMode {
+				helpBar += renderSearchHelpBar()
+			} else {
+				helpBar += renderViewportHelpBar()
+			}
 
-			view = header + headerStr + m.policyView.View() + helpBar
+			// Show search input and match status if in search mode or has results
+			searchBar := ""
+			if m.searchMode {
+				searchStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("220")).
+					Bold(true).
+					PaddingLeft(1)
+				searchBar = "\n" + searchStyle.Render(fmt.Sprintf("Search: %s_", m.searchQuery))
+			} else if len(m.searchResults) > 0 {
+				// Show search results status
+				matchStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("245")).
+					PaddingLeft(1)
+				searchBar = "\n" + matchStyle.Render(fmt.Sprintf("Match %d of %d for '%s'", m.currentMatch+1, len(m.searchResults), m.searchQuery))
+			}
+
+			// Apply search highlighting if we have search results
+			content := m.policyDocument
+			if len(m.searchResults) > 0 && m.searchQuery != "" {
+				content = m.highlightSearchResults(m.policyDocument, m.searchQuery, m.currentMatch)
+			}
+			m.policyView.SetContent(content)
+
+			view = header + headerStr + m.policyView.View() + helpBar + searchBar
 		}
 
 	case "profiles":
@@ -805,6 +909,94 @@ func renderViewportHelpBar() string {
 		PaddingLeft(1)
 
 	return helpStyle.Render(helpText)
+}
+
+// renderSearchHelpBar renders a help bar for search mode
+func renderSearchHelpBar() string {
+	helpItems := []string{
+		"enter confirm search",
+		"esc exit search",
+		"backspace delete char",
+		"type to search",
+		"n next match",
+		"N previous match",
+	}
+
+	helpText := strings.Join(helpItems, " • ")
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		PaddingLeft(1)
+
+	return helpStyle.Render(helpText)
+}
+
+// performSearch searches for the query in the policy document and stores line numbers with matches
+func (m *model) performSearch() {
+	if m.searchQuery == "" {
+		m.searchResults = []int{}
+		return
+	}
+
+	lines := strings.Split(m.policyDocument, "\n")
+	m.searchResults = []int{}
+
+	// Case-insensitive search
+	query := strings.ToLower(m.searchQuery)
+
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(stripAnsiCodes(line)), query) {
+			m.searchResults = append(m.searchResults, i)
+		}
+	}
+
+	m.currentMatch = 0
+}
+
+// highlightSearchResults highlights search matches in the document content
+func (m *model) highlightSearchResults(content, query string, currentMatchIndex int) string {
+	if query == "" || len(m.searchResults) == 0 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	query = strings.ToLower(query)
+
+	// Create highlight styles
+	matchStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("11")). // Bright yellow background
+		Foreground(lipgloss.Color("0")). // Black text
+		Bold(true)
+
+	currentMatchStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("196")). // Bright red background
+		Foreground(lipgloss.Color("15")). // White text
+		Bold(true)
+
+	// Track which line we're currently highlighting as the active match
+	currentMatchLine := -1
+	if currentMatchIndex >= 0 && currentMatchIndex < len(m.searchResults) {
+		currentMatchLine = m.searchResults[currentMatchIndex]
+	}
+
+	// Apply highlighting to each line that contains matches
+	for i, line := range lines {
+		// Check if this line contains the search term
+		if strings.Contains(strings.ToLower(stripAnsiCodes(line)), query) {
+			// Determine which highlight style to use
+			style := matchStyle
+			if i == currentMatchLine {
+				style = currentMatchStyle
+			}
+
+			// Use case-insensitive replacement but preserve original case
+			re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(query))
+			lines[i] = re.ReplaceAllStringFunc(line, func(match string) string {
+				return style.Render(match)
+			})
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // Custom messages for handling asynchronous operations
