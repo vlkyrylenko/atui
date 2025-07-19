@@ -486,50 +486,73 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle viewport-specific key bindings
 		case key.Matches(msg, keys.PageUp):
 			if m.currentScreen == "policy_document" {
-				m.policyView.ViewUp()
+				m.policyView.YOffset -= m.policyView.Height
+				if m.policyView.YOffset < 0 {
+					m.policyView.YOffset = 0
+				}
 				return m, nil
 			}
 
 		case key.Matches(msg, keys.PageDown):
 			if m.currentScreen == "policy_document" {
-				m.policyView.ViewDown()
+				m.policyView.YOffset += m.policyView.Height
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if m.policyView.YOffset > maxOffset {
+					m.policyView.YOffset = maxOffset
+				}
 				return m, nil
 			}
 
 		case key.Matches(msg, keys.HalfPageUp):
 			if m.currentScreen == "policy_document" {
-				m.policyView.HalfViewUp()
+				m.policyView.YOffset -= m.policyView.Height / 2
+				if m.policyView.YOffset < 0 {
+					m.policyView.YOffset = 0
+				}
 				return m, nil
 			}
 
 		case key.Matches(msg, keys.HalfPageDown):
 			if m.currentScreen == "policy_document" {
-				m.policyView.HalfViewDown()
+				m.policyView.YOffset += m.policyView.Height / 2
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if m.policyView.YOffset > maxOffset {
+					m.policyView.YOffset = maxOffset
+				}
 				return m, nil
 			}
 
 		case key.Matches(msg, keys.GotoTop):
 			if m.currentScreen == "policy_document" {
-				m.policyView.GotoTop()
+				m.policyView.YOffset = 0
 				return m, nil
 			}
 
 		case key.Matches(msg, keys.GotoBottom):
 			if m.currentScreen == "policy_document" {
-				m.policyView.GotoBottom()
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
+				m.policyView.YOffset = maxOffset
 				return m, nil
 			}
 
 		// Handle up/down keys for viewport
 		case key.Matches(msg, keys.Up):
 			if m.currentScreen == "policy_document" {
-				m.policyView.LineUp(1)
+				if m.policyView.YOffset > 0 {
+					m.policyView.YOffset--
+				}
 				return m, nil
 			}
 
 		case key.Matches(msg, keys.Down):
 			if m.currentScreen == "policy_document" {
-				m.policyView.LineDown(1)
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if m.policyView.YOffset < maxOffset {
+					m.policyView.YOffset++
+				}
 				return m, nil
 			}
 		}
