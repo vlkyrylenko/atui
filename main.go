@@ -788,18 +788,6 @@ func (m model) View() string {
 		profileIndicator = profileStyle.Render(profileText)
 	}
 
-	// Create user ARN display for bottom of screen with light translucent green highlighting
-	userArnDisplay := ""
-	if m.userArn != "" {
-		userArnStyle := lipgloss.NewStyle().
-			Background(lipgloss.Color("42")). // Light green background
-			Foreground(lipgloss.Color("0")). // Black text
-			Padding(0, 1)
-
-		userArnText := fmt.Sprintf("Current user ARN: %s", m.userArn)
-		userArnDisplay = userArnStyle.Render(userArnText)
-	}
-
 	var view string
 
 	switch m.currentScreen {
@@ -939,9 +927,29 @@ func (m model) View() string {
 		}
 	}
 
-	// Add user ARN display at the bottom of all screens
-	if userArnDisplay != "" {
-		view += "\n" + userArnDisplay
+	// Position user ARN at the bottom using absolute positioning
+	if m.userArn != "" {
+		userArnStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("42")). // Light green background
+			Foreground(lipgloss.Color("0")). // Black text
+			Padding(0, 1)
+
+		userArnText := fmt.Sprintf("Current user ARN: %s", m.userArn)
+		userArnDisplay := userArnStyle.Render(userArnText)
+
+		// Calculate the height of the main view content
+		viewLines := strings.Split(view, "\n")
+		contentHeight := len(viewLines)
+
+		// Create padding to push the user ARN to the bottom
+		if m.height > contentHeight+1 {
+			paddingLines := m.height - contentHeight - 1
+			padding := strings.Repeat("\n", paddingLines)
+			view = view + padding + userArnDisplay
+		} else {
+			// If content is too tall, place at bottom anyway
+			view = view + "\n" + userArnDisplay
+		}
 	}
 
 	return view
