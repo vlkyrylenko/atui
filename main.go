@@ -939,6 +939,11 @@ func (m model) View() string {
 			helpBar += renderListHelpBar(m.currentScreen) + "\n"
 		}
 
+		// Add gap between help bar and current ARN message
+		if helpBar != "" {
+			helpBar += "\n"
+		}
+
 		// Add status message if present
 		if m.statusMsg != "" {
 			statusStyle := appTheme.statusMessageStyle(m.statusMsg)
