@@ -5,13 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"net/url"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -22,6 +15,12 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"log"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	appconfig "github.com/vlkyrylenko/atui/config"
 )
@@ -63,6 +62,12 @@ type model struct {
 	currentProfile    string
 	availableProfiles []string
 	profilesList      list.Model
+	userArn           string // Store current user ARN
+	// Viewport search functionality
+	searchMode    bool
+	searchQuery   string
+	searchResults []int // Line numbers containing matches
+	currentMatch  int   // Current match index
 }
 
 // RoleItem represents an IAM role
@@ -132,16 +137,55 @@ type keyMap struct {
 	Back          key.Binding
 	SwitchProfile key.Binding
 	Quit          key.Binding
+	Filter        key.Binding // Filter list items
+	// Viewport-specific key bindings
+	PageUp       key.Binding
+	PageDown     key.Binding
+	HalfPageUp   key.Binding
+	HalfPageDown key.Binding
+	GotoTop      key.Binding
+	GotoBottom   key.Binding
+	Search       key.Binding // Search in viewport
+	NextMatch    key.Binding // Navigate to next search match
+	PrevMatch    key.Binding // Navigate to previous search match
+}
+
+// ShortHelp returns the short help for keybindings
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Down, k.SwitchProfile, k.Back, k.Quit}
+}
+
+// FullHelp returns the full help for keybindings
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down},
+		{k.Enter, k.SwitchProfile},
+		{k.Back, k.Quit},
+	}
+}
+
+// ViewportShortHelp returns short help for viewport screen
+func (k keyMap) ViewportShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Down, k.PageUp, k.PageDown, k.Search, k.NextMatch, k.PrevMatch, k.Back, k.Quit}
+}
+
+// ViewportFullHelp returns full help for viewport screen
+func (k keyMap) ViewportFullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down, k.PageUp, k.PageDown},
+		{k.HalfPageUp, k.HalfPageDown, k.GotoTop, k.GotoBottom},
+		{k.Back, k.Quit},
+	}
 }
 
 var keys = keyMap{
 	Up: key.NewBinding(
 		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "move up"),
+		key.WithHelp("↑/k", "up"),
 	),
 	Down: key.NewBinding(
 		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "move down"),
+		key.WithHelp("↓/j", "down"),
 	),
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),
@@ -149,16 +193,89 @@ var keys = keyMap{
 	),
 	Back: key.NewBinding(
 		key.WithKeys("escape", "esc"),
-		key.WithHelp("esc", "back"),
+		key.WithHelp("esc", "go back"),
 	),
 	SwitchProfile: key.NewBinding(
 		key.WithKeys("p"),
-		key.WithHelp("p", "switch profile"),
+		key.WithHelp("p", "switch profiles"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
-		key.WithHelp("q/ctrl+c", "quit"),
+		key.WithHelp("q", "quit"),
 	),
+	// Viewport-specific key bindings
+	PageUp: key.NewBinding(
+		key.WithKeys("pgup"),
+		key.WithHelp("pgup", "scroll up"),
+	),
+	PageDown: key.NewBinding(
+		key.WithKeys("pgdn"),
+		key.WithHelp("pgdn", "scroll down"),
+	),
+	HalfPageUp: key.NewBinding(
+		key.WithKeys("shift+pgup"),
+		key.WithHelp("shift+pgup", "scroll half page up"),
+	),
+	HalfPageDown: key.NewBinding(
+		key.WithKeys("shift+pgdn"),
+		key.WithHelp("shift+pgdn", "scroll half page down"),
+	),
+	GotoTop: key.NewBinding(
+		key.WithKeys("home"),
+		key.WithHelp("home", "go to top"),
+	),
+	GotoBottom: key.NewBinding(
+		key.WithKeys("end"),
+		key.WithHelp("end", "go to bottom"),
+	),
+	Search: key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "search"),
+	),
+	NextMatch: key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "next match"),
+	),
+	PrevMatch: key.NewBinding(
+		key.WithKeys("N"),
+		key.WithHelp("N", "previous match"),
+	),
+	Filter: key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "filter items"),
+	),
+}
+
+// updateKeyBindingsForScreen updates the help text for key bindings based on the current screen
+func updateKeyBindingsForScreen(currentScreen string) {
+	switch currentScreen {
+	case "roles":
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "select role"),
+		)
+	case "policies":
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "view policy details"),
+		)
+	case "policy_document":
+		// Enter key is not used in policy document view, so we can hide it or keep generic
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "select"),
+		)
+	case "profiles":
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "switch profile"),
+		)
+	default:
+		keys.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "select"),
+		)
+	}
 }
 
 // Initialize the model
@@ -172,10 +289,24 @@ func initialModel() model {
 	rolesList.Title = "AWS IAM Roles"
 	rolesList.SetShowStatusBar(false)
 	rolesList.SetFilteringEnabled(true)
-	rolesList.Styles.Title = appTheme.titleStyle
+	rolesList.SetShowHelp(false) // Disable original help bar
+	// Create boxed title style
+	boxedTitleStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("99")). // Purple background to match logo
+		Foreground(lipgloss.Color("15")). // White text
+		Bold(true).
+		Padding(0, 1).
+		MarginLeft(2)
+	rolesList.Styles.Title = boxedTitleStyle
 	rolesList.Styles.PaginationStyle = appTheme.paginationStyle
 	rolesList.Styles.HelpStyle = appTheme.helpStyle
-	// Disable default list keybindings for Escape key
+	// Set custom key bindings
+	rolesList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
+	rolesList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
 	rolesList.KeyMap.Quit.SetKeys("ctrl+c")
 	rolesList.KeyMap.CloseFullHelp.SetKeys("q")
 
@@ -192,10 +323,17 @@ func initialModel() model {
 	policiesList.Title = "Policies"
 	policiesList.SetShowStatusBar(false)
 	policiesList.SetFilteringEnabled(true)
-	policiesList.Styles.Title = appTheme.titleStyle
+	policiesList.SetShowHelp(false) // Disable original help bar
+	policiesList.Styles.Title = boxedTitleStyle
 	policiesList.Styles.PaginationStyle = appTheme.paginationStyle
 	policiesList.Styles.HelpStyle = appTheme.helpStyle
-	// Disable default list keybindings for Escape key
+	// Set custom key bindings
+	policiesList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
+	policiesList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.SwitchProfile, keys.Back}
+	}
 	policiesList.KeyMap.Quit.SetKeys("ctrl+c")
 	policiesList.KeyMap.CloseFullHelp.SetKeys("q")
 
@@ -206,10 +344,17 @@ func initialModel() model {
 	profilesList.Title = "AWS Profiles"
 	profilesList.SetShowStatusBar(false)
 	profilesList.SetFilteringEnabled(true)
-	profilesList.Styles.Title = appTheme.titleStyle
+	profilesList.SetShowHelp(false) // Disable original help bar
+	profilesList.Styles.Title = boxedTitleStyle
 	profilesList.Styles.PaginationStyle = appTheme.paginationStyle
 	profilesList.Styles.HelpStyle = appTheme.helpStyle
-	// Disable default list keybindings for Escape key
+	// Set custom key bindings
+	profilesList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.Back}
+	}
+	profilesList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Enter, keys.Back}
+	}
 	profilesList.KeyMap.Quit.SetKeys("ctrl+c")
 	profilesList.KeyMap.CloseFullHelp.SetKeys("q")
 
@@ -226,10 +371,13 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
+	// Set initial key bindings for the starting screen
+	updateKeyBindingsForScreen("roles")
 	return tea.Batch(
 		m.spinner.Tick,
 		loadCurrentProfileCmd(),
 		loadIAMRolesCmd(),
+		loadUserArnCmd(),
 	)
 }
 
@@ -246,15 +394,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEsc {
 			if m.currentScreen == "profiles" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policies" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.selectedPolicy = nil
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policy_document" {
 				m.currentScreen = "policies"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			}
@@ -267,6 +418,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.SwitchProfile):
 			if m.currentScreen != "profiles" {
 				m.currentScreen = "profiles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.loading = true
 				// Ensure profiles list is properly sized
 				headerHeight := 6
@@ -279,15 +431,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Back):
 			if m.currentScreen == "profiles" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policies" {
 				m.currentScreen = "roles"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.selectedPolicy = nil
 				m.statusMsg = ""
 				return m, nil
 			} else if m.currentScreen == "policy_document" {
 				m.currentScreen = "policies"
+				updateKeyBindingsForScreen(m.currentScreen)
 				m.statusMsg = ""
 				return m, nil
 			}
@@ -301,6 +456,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selected, ok := m.rolesList.SelectedItem().(*RoleItem); ok {
 					m.selectedRole = selected
 					m.currentScreen = "policies"
+					updateKeyBindingsForScreen(m.currentScreen)
 					m.policiesList.Title = fmt.Sprintf("Policies for %s", m.selectedRole.roleName)
 					m.statusMsg = ""
 
@@ -335,7 +491,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selected, ok := m.policiesList.SelectedItem().(*PolicyItem); ok {
 					m.selectedPolicy = selected
 					m.currentScreen = "policy_document"
+					updateKeyBindingsForScreen(m.currentScreen)
 					m.statusMsg = ""
+
+					// Reset search state when switching policy documents
+					m.searchMode = false
+					m.searchQuery = ""
+					m.searchResults = []int{}
+					m.currentMatch = 0
 
 					if !m.selectedPolicy.documentLoaded {
 						m.loading = true
@@ -358,8 +521,136 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+
+		// Handle viewport-specific key bindings
+		case key.Matches(msg, keys.Search):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				m.searchMode = true
+				m.searchQuery = ""
+				m.searchResults = []int{}
+				m.currentMatch = 0
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.PageUp):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				m.policyView.YOffset -= m.policyView.Height
+				if m.policyView.YOffset < 0 {
+					m.policyView.YOffset = 0
+				}
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.PageDown):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				m.policyView.YOffset += m.policyView.Height
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if m.policyView.YOffset > maxOffset {
+					m.policyView.YOffset = maxOffset
+				}
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.HalfPageUp):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				m.policyView.YOffset -= m.policyView.Height / 2
+				if m.policyView.YOffset < 0 {
+					m.policyView.YOffset = 0
+				}
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.HalfPageDown):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				m.policyView.YOffset += m.policyView.Height / 2
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if m.policyView.YOffset > maxOffset {
+					m.policyView.YOffset = maxOffset
+				}
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.GotoTop):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				m.policyView.YOffset = 0
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.GotoBottom):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
+				m.policyView.YOffset = maxOffset
+				return m, nil
+			}
+
+		// Handle search result navigation
+		case key.Matches(msg, keys.NextMatch):
+			if m.currentScreen == "policy_document" && len(m.searchResults) > 0 {
+				m.currentMatch = (m.currentMatch + 1) % len(m.searchResults)
+				m.policyView.YOffset = m.searchResults[m.currentMatch]
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.PrevMatch):
+			if m.currentScreen == "policy_document" && len(m.searchResults) > 0 {
+				m.currentMatch = (m.currentMatch - 1 + len(m.searchResults)) % len(m.searchResults)
+				m.policyView.YOffset = m.searchResults[m.currentMatch]
+				return m, nil
+			}
+
+		// Handle up/down keys for viewport
+		case key.Matches(msg, keys.Up):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				if m.policyView.YOffset > 0 {
+					m.policyView.YOffset--
+				}
+				return m, nil
+			}
+
+		case key.Matches(msg, keys.Down):
+			if m.currentScreen == "policy_document" && !m.searchMode {
+				maxOffset := len(strings.Split(m.policyDocument, "\n")) - m.policyView.Height
+				if m.policyView.YOffset < maxOffset {
+					m.policyView.YOffset++
+				}
+				return m, nil
+			}
 		}
 
+		// Handle search mode input
+		if m.searchMode && m.currentScreen == "policy_document" {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.searchMode = false
+				m.searchQuery = ""
+				m.searchResults = []int{}
+				m.currentMatch = 0
+				return m, nil
+			case tea.KeyEnter:
+				if m.searchQuery != "" {
+					m.performSearch()
+					if len(m.searchResults) > 0 {
+						// Jump to first match
+						m.policyView.YOffset = m.searchResults[0]
+					}
+				}
+				m.searchMode = false
+				return m, nil
+			case tea.KeyBackspace:
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				}
+				return m, nil
+			default:
+				if len(msg.String()) == 1 && msg.String() >= " " {
+					m.searchQuery += msg.String()
+				}
+				return m, nil
+			}
+		}
 	case tea.WindowSizeMsg:
 		m.height = msg.Height
 		m.width = msg.Width
@@ -444,6 +735,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.profilesList.SetItems(items)
 		return m, nil
 
+	case userArnLoadedMsg:
+		m.userArn = msg.arn
+		return m, nil
+
 	case spinner.TickMsg:
 		var spinnerCmd tea.Cmd
 		m.spinner, spinnerCmd = m.spinner.Update(msg)
@@ -505,43 +800,51 @@ func (m model) View() string {
 
 	switch m.currentScreen {
 	case "roles":
-		// Create header with profile indicator
+		// Create header with logo and profile indicator on the same line
+		logo := displayLogo()
 		header := ""
 		if profileIndicator != "" {
-			headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
-			if headerWidth > 0 {
-				spacer := strings.Repeat(" ", headerWidth)
-				header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+			// Calculate spacing to put logo on left, profile on right
+			logoWidth := len(stripAnsiCodes(logo))
+			profileWidth := len(stripAnsiCodes(profileIndicator))
+			spacerWidth := m.width - logoWidth - profileWidth - 2
+			if spacerWidth > 0 {
+				spacer := strings.Repeat(" ", spacerWidth)
+				header = fmt.Sprintf("%s%s%s\n", logo, spacer, profileIndicator)
 			} else {
-				header = fmt.Sprintf("%s\n", profileIndicator)
+				// Not enough space, put on separate lines
+				header = fmt.Sprintf("%s\n%s\n", logo, profileIndicator)
 			}
+		} else {
+			header = fmt.Sprintf("%s\n", logo)
 		}
 
 		view = header + "\n" + m.rolesList.View()
-		if m.statusMsg != "" {
-			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
-		}
-		view += "\n  press p to switch profiles • q to quit"
+		// Status message will be handled in the footer area
 
 	case "policies":
 		if m.selectedRole != nil {
-			// Create header with profile indicator
+			// Create header with logo and profile indicator on the same line
+			logo := displayLogo()
 			header := ""
 			if profileIndicator != "" {
-				headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
-				if headerWidth > 0 {
-					spacer := strings.Repeat(" ", headerWidth)
-					header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+				// Calculate spacing to put logo on left, profile on right
+				logoWidth := len(stripAnsiCodes(logo))
+				profileWidth := len(stripAnsiCodes(profileIndicator))
+				spacerWidth := m.width - logoWidth - profileWidth - 2
+				if spacerWidth > 0 {
+					spacer := strings.Repeat(" ", spacerWidth)
+					header = fmt.Sprintf("%s%s%s\n", logo, spacer, profileIndicator)
 				} else {
-					header = fmt.Sprintf("%s\n", profileIndicator)
+					// Not enough space, put on separate lines
+					header = fmt.Sprintf("%s\n%s\n", logo, profileIndicator)
 				}
+			} else {
+				header = fmt.Sprintf("%s\n", logo)
 			}
 
 			view = header + "\n" + m.policiesList.View()
-			if m.statusMsg != "" {
-				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
-			}
-			view += "\n  press enter to view policy details • p to switch profiles • esc to go back • q to quit"
+			// Status message will be handled in the footer area
 		}
 
 	case "policy_document":
@@ -567,31 +870,259 @@ func (m model) View() string {
 				headerStr += fmt.Sprintf("  %s\n", appTheme.policyMetadataStyle("ARN: "+m.selectedPolicy.policyArn))
 			}
 			headerStr += "\n"
-			helpStr := "\n\n  press p to switch profiles • esc to go back • q to quit\n"
-			view = header + headerStr + m.policyView.View() + helpStr
+
+			// Show search input and match status if in search mode or has results
+			searchBar := ""
+			if m.searchMode {
+				searchStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("220")).
+					Bold(true).
+					PaddingLeft(1)
+				searchBar = "\n" + searchStyle.Render(fmt.Sprintf("Search: %s_", m.searchQuery))
+			} else if len(m.searchResults) > 0 {
+				// Show search results status
+				matchStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color("245")).
+					PaddingLeft(1)
+				searchBar = "\n" + matchStyle.Render(fmt.Sprintf("Match %d of %d for '%s'", m.currentMatch+1, len(m.searchResults), m.searchQuery))
+			}
+
+			// Apply search highlighting if we have search results
+			content := m.policyDocument
+			if len(m.searchResults) > 0 && m.searchQuery != "" {
+				content = m.highlightSearchResults(m.policyDocument, m.searchQuery, m.currentMatch)
+			}
+			m.policyView.SetContent(content)
+
+			view = header + headerStr + m.policyView.View() + searchBar
 		}
 
 	case "profiles":
-		// Create header with profile indicator
+		// Create header with logo and profile indicator on the same line
+		logo := displayLogo()
 		header := ""
 		if profileIndicator != "" {
-			headerWidth := m.width - len(stripAnsiCodes(profileIndicator)) - 2
-			if headerWidth > 0 {
-				spacer := strings.Repeat(" ", headerWidth)
-				header = fmt.Sprintf("%s%s\n", spacer, profileIndicator)
+			// Calculate spacing to put logo on left, profile on right
+			logoWidth := len(stripAnsiCodes(logo))
+			profileWidth := len(stripAnsiCodes(profileIndicator))
+			spacerWidth := m.width - logoWidth - profileWidth - 2
+			if spacerWidth > 0 {
+				spacer := strings.Repeat(" ", spacerWidth)
+				header = fmt.Sprintf("%s%s%s\n", logo, spacer, profileIndicator)
 			} else {
-				header = fmt.Sprintf("%s\n", profileIndicator)
+				// Not enough space, put on separate lines
+				header = fmt.Sprintf("%s\n%s\n", logo, profileIndicator)
 			}
+		} else {
+			header = fmt.Sprintf("%s\n", logo)
 		}
 
 		view = header + "\n" + m.profilesList.View()
-		if m.statusMsg != "" {
-			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
+		// Status message will be handled in the footer area
+	}
+
+	// Create consistent footer with help bar and user ARN for all views
+	if m.userArn != "" {
+		// Add help bar above Current ARN message based on current screen
+		helpBar := ""
+		statusBar := ""
+
+		switch m.currentScreen {
+		case "policy_document":
+			if m.searchMode {
+				helpBar += renderSearchHelpBar() + "\n"
+			} else {
+				helpBar += renderViewportHelpBar() + "\n"
+			}
+		case "roles", "policies", "profiles":
+			// Show general help for list navigation
+			helpBar += renderListHelpBar(m.currentScreen) + "\n"
 		}
-		view += "\n  press enter to switch profile • esc to go back • q to quit"
+
+		// Add gap between help bar and current ARN message
+		if helpBar != "" {
+			helpBar += "\n"
+		}
+
+		// Add status message if present
+		if m.statusMsg != "" {
+			statusStyle := appTheme.statusMessageStyle(m.statusMsg)
+			statusBar = statusStyle + "\n"
+		}
+
+		userArnStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("42")). // Light green background
+			Foreground(lipgloss.Color("0")). // Black text
+			Padding(0, 1)
+
+		userArnText := fmt.Sprintf("Current user ARN: %s", m.userArn)
+		userArnDisplay := userArnStyle.Render(userArnText)
+
+		// Calculate the height of the main view content
+		viewLines := strings.Split(view, "\n")
+		contentHeight := len(viewLines)
+
+		// Calculate footer height
+		footerHeight := 1 // User ARN takes one line
+		if helpBar != "" {
+			footerHeight += 1
+		}
+		if statusBar != "" {
+			footerHeight += 1
+		}
+
+		// Create padding to push footer to the bottom
+		if m.height > contentHeight+footerHeight {
+			paddingLines := m.height - contentHeight - footerHeight
+			padding := strings.Repeat("\n", paddingLines)
+			view = view + padding + statusBar + helpBar + userArnDisplay
+		} else {
+			// If content is too tall, place at bottom anyway
+			view = view + "\n" + statusBar + helpBar + userArnDisplay
+		}
 	}
 
 	return view
+}
+
+// renderViewportHelpBar renders a help bar for viewport navigation
+func renderViewportHelpBar() string {
+	helpKeys := keys.ViewportShortHelp()
+	var helpStrings []string
+
+	for _, binding := range helpKeys {
+		helpStrings = append(helpStrings, fmt.Sprintf("%s %s", binding.Help().Key, binding.Help().Desc))
+	}
+
+	helpText := strings.Join(helpStrings, " • ")
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		PaddingLeft(1)
+
+	return helpStyle.Render(helpText)
+}
+
+// renderSearchHelpBar renders a help bar for search mode
+func renderSearchHelpBar() string {
+	helpItems := []string{
+		"enter confirm search",
+		"esc exit search",
+		"backspace delete char",
+		"type to search",
+		"n next match",
+		"N previous match",
+	}
+
+	helpText := strings.Join(helpItems, " • ")
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		PaddingLeft(1)
+
+	return helpStyle.Render(helpText)
+}
+
+// renderListHelpBar renders a help bar for list navigation using the same code as original lists
+func renderListHelpBar(currentScreen string) string {
+	// Use the exact same help rendering as the original list components
+	var helpKeys []key.Binding
+
+	switch currentScreen {
+	case "roles", "policies":
+		// Use the same keys that were defined in AdditionalShortHelpKeys for roles/policies, plus filter
+		helpKeys = []key.Binding{keys.Enter, keys.Filter, keys.SwitchProfile, keys.Back}
+	case "profiles":
+		// Use the same keys that were defined in AdditionalShortHelpKeys for profiles, plus filter
+		helpKeys = []key.Binding{keys.Enter, keys.Filter, keys.Back}
+	default:
+		helpKeys = []key.Binding{}
+	}
+
+	// Add the default list navigation keys (up/down) and quit, matching the original pattern
+	allKeys := []key.Binding{keys.Up, keys.Down}
+	allKeys = append(allKeys, helpKeys...)
+	allKeys = append(allKeys, keys.Quit)
+
+	// Use the exact same formatting logic as the list component's help system
+	var helpStrings []string
+	for _, binding := range allKeys {
+		helpStrings = append(helpStrings, fmt.Sprintf("%s %s", binding.Help().Key, binding.Help().Desc))
+	}
+
+	helpText := strings.Join(helpStrings, " • ")
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		PaddingLeft(1)
+
+	return helpStyle.Render(helpText)
+}
+
+// performSearch searches for the query in the policy document and stores line numbers with matches
+func (m *model) performSearch() {
+	if m.searchQuery == "" {
+		m.searchResults = []int{}
+		return
+	}
+
+	lines := strings.Split(m.policyDocument, "\n")
+	m.searchResults = []int{}
+
+	// Case-insensitive search
+	query := strings.ToLower(m.searchQuery)
+
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(stripAnsiCodes(line)), query) {
+			m.searchResults = append(m.searchResults, i)
+		}
+	}
+
+	m.currentMatch = 0
+}
+
+// highlightSearchResults highlights search matches in the document content
+func (m *model) highlightSearchResults(content, query string, currentMatchIndex int) string {
+	if query == "" || len(m.searchResults) == 0 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	query = strings.ToLower(query)
+
+	// Create highlight styles
+	matchStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("11")). // Bright yellow background
+		Foreground(lipgloss.Color("0")). // Black text
+		Bold(true)
+
+	currentMatchStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("201")). // Bright magenta background
+		Foreground(lipgloss.Color("15")). // White text
+		Bold(true)
+
+	// Track which line we're currently highlighting as the active match
+	currentMatchLine := -1
+	if currentMatchIndex >= 0 && currentMatchIndex < len(m.searchResults) {
+		currentMatchLine = m.searchResults[currentMatchIndex]
+	}
+
+	// Apply highlighting to each line that contains matches
+	for i, line := range lines {
+		// Check if this line contains the search term
+		if strings.Contains(strings.ToLower(stripAnsiCodes(line)), query) {
+			// Determine which highlight style to use
+			style := matchStyle
+			if i == currentMatchLine {
+				style = currentMatchStyle
+			}
+
+			// Use case-insensitive replacement but preserve original case
+			re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(query))
+			lines[i] = re.ReplaceAllStringFunc(line, func(match string) string {
+				return style.Render(match)
+			})
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // Custom messages for handling asynchronous operations
@@ -612,6 +1143,10 @@ type profilesLoadedMsg struct {
 	currentProfile string
 }
 
+type userArnLoadedMsg struct {
+	arn string
+}
+
 type errorMsg error
 
 // Load IAM roles from AWS
@@ -627,16 +1162,6 @@ func loadIAMRolesCmd() tea.Cmd {
 
 		// Create clients
 		iamClient := iam.NewFromConfig(cfg)
-		stsClient := sts.NewFromConfig(cfg)
-
-		// Get caller identity to determine current user/role
-		identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
-		if err != nil {
-			return errorMsg(fmt.Errorf("error getting caller identity: %w", err))
-		}
-
-		userArn := aws.ToString(identity.Arn)
-		fmt.Println("Current user ARN:", userArn)
 
 		// List IAM roles
 		var roles []RoleItem
@@ -662,6 +1187,31 @@ func loadIAMRolesCmd() tea.Cmd {
 		}
 
 		return rolesLoadedMsg(roles)
+	}
+}
+
+// Load current user ARN
+func loadUserArnCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Load AWS configuration with shared config
+		cfg, err := config.LoadDefaultConfig(ctx)
+		if err != nil {
+			return errorMsg(fmt.Errorf("error loading AWS configuration: %w", err))
+		}
+
+		// Create STS client
+		stsClient := sts.NewFromConfig(cfg)
+
+		// Get caller identity to determine current user/role
+		identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		if err != nil {
+			return errorMsg(fmt.Errorf("error getting caller identity: %w", err))
+		}
+
+		userArn := aws.ToString(identity.Arn)
+		return userArnLoadedMsg{arn: userArn}
 	}
 }
 
@@ -860,6 +1410,12 @@ func wordWrap(text string, maxWidth int) string {
 	}
 
 	return result.String()
+}
+
+// displayLogo returns a simple colorful logo for display in the UI
+func displayLogo() string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
+	return style.Render("🌈 AWS Terminal UI 🌈")
 }
 
 func main() {
