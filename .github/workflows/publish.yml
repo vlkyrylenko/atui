@@ -1,0 +1,130 @@
+name: Publish a Tag and Release
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run in dry-run mode (no actual tags/releases created)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  create-tag-and-release:
+    # Only run when PRs are merged, not just closed
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Run Go tests before creating release
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run tests
+        run: go test -v ./...
+
+      # Generate new semver tag based on commit messages
+      - name: Create new semver tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+
+      # Extract the major version with improved regex handling
+      - name: Extract major version
+        id: extract_major
+        run: |
+          NEW_TAG="${{ steps.tag_version.outputs.new_tag }}"
+          echo "Processing tag: ${NEW_TAG}"
+          
+          # Handle various tag formats including pre-release
+          if [[ $NEW_TAG =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-.*)?$ ]]; then
+            MAJOR_VERSION="v${BASH_REMATCH[1]}"
+            echo "major_version=${MAJOR_VERSION}" >> $GITHUB_OUTPUT
+            echo "Extracted major version: ${MAJOR_VERSION}"
+          else
+            echo "::error::Failed to extract major version from ${NEW_TAG}. Expected semver format (e.g., v1.2.3 or 1.2.3-alpha)"
+            exit 1
+          fi
+      
+      # Update or create the major version tag with better error handling
+      - name: Update major version tag
+        if: github.event.inputs.dry_run != 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const majorVersion = '${{ steps.extract_major.outputs.major_version }}';
+            console.log(`Processing major version tag: ${majorVersion}`);
+            
+            try {
+              // Try to get the reference first
+              const existingRef = await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${majorVersion}`
+              });
+              
+              console.log(`Found existing tag ${majorVersion}, updating...`);
+              
+              // Update existing major version tag
+              await github.rest.git.updateRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${majorVersion}`,
+                sha: context.sha,
+                force: true
+              });
+              
+              console.log(`Successfully updated ${majorVersion} tag`);
+              
+            } catch (error) {
+              if (error.status === 404) {
+                console.log(`Tag ${majorVersion} doesn't exist, creating new one...`);
+                
+                // Create new major version tag if it doesn't exist
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `refs/tags/${majorVersion}`,
+                  sha: context.sha
+                });
+                
+                console.log(`Successfully created ${majorVersion} tag`);
+              } else {
+                console.error(`Error managing ${majorVersion} tag:`, error);
+                throw error;
+              }
+            }
+      
+      # Create a GitHub release with auto-generated release notes
+      - name: Create GitHub Release
+        if: github.event.inputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dry run summary
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "::notice::Dry run completed successfully"
+          echo "::notice::Would create tag: ${{ steps.tag_version.outputs.new_tag }}"
+          echo "::notice::Would update major version tag: ${{ steps.extract_major.outputs.major_version }}"
