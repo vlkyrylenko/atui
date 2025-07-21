@@ -137,6 +137,7 @@ type keyMap struct {
 	Back          key.Binding
 	SwitchProfile key.Binding
 	Quit          key.Binding
+	Filter        key.Binding // Filter list items
 	// Viewport-specific key bindings
 	PageUp       key.Binding
 	PageDown     key.Binding
@@ -239,6 +240,10 @@ var keys = keyMap{
 		key.WithKeys("N"),
 		key.WithHelp("N", "previous match"),
 	),
+	Filter: key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "filter items"),
+	),
 }
 
 // updateKeyBindingsForScreen updates the help text for key bindings based on the current screen
@@ -284,6 +289,7 @@ func initialModel() model {
 	rolesList.Title = "AWS IAM Roles"
 	rolesList.SetShowStatusBar(false)
 	rolesList.SetFilteringEnabled(true)
+	rolesList.SetShowHelp(false) // Disable original help bar
 	// Create boxed title style
 	boxedTitleStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("99")). // Purple background to match logo
@@ -317,6 +323,7 @@ func initialModel() model {
 	policiesList.Title = "Policies"
 	policiesList.SetShowStatusBar(false)
 	policiesList.SetFilteringEnabled(true)
+	policiesList.SetShowHelp(false) // Disable original help bar
 	policiesList.Styles.Title = boxedTitleStyle
 	policiesList.Styles.PaginationStyle = appTheme.paginationStyle
 	policiesList.Styles.HelpStyle = appTheme.helpStyle
@@ -337,6 +344,7 @@ func initialModel() model {
 	profilesList.Title = "AWS Profiles"
 	profilesList.SetShowStatusBar(false)
 	profilesList.SetFilteringEnabled(true)
+	profilesList.SetShowHelp(false) // Disable original help bar
 	profilesList.Styles.Title = boxedTitleStyle
 	profilesList.Styles.PaginationStyle = appTheme.paginationStyle
 	profilesList.Styles.HelpStyle = appTheme.helpStyle
@@ -812,9 +820,7 @@ func (m model) View() string {
 		}
 
 		view = header + "\n" + m.rolesList.View()
-		if m.statusMsg != "" {
-			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
-		}
+		// Status message will be handled in the footer area
 
 	case "policies":
 		if m.selectedRole != nil {
@@ -838,9 +844,7 @@ func (m model) View() string {
 			}
 
 			view = header + "\n" + m.policiesList.View()
-			if m.statusMsg != "" {
-				view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
-			}
+			// Status message will be handled in the footer area
 		}
 
 	case "policy_document":
@@ -867,14 +871,6 @@ func (m model) View() string {
 			}
 			headerStr += "\n"
 
-			// Add help bar at the bottom - show search help when in search mode
-			helpBar := "\n"
-			if m.searchMode {
-				helpBar += renderSearchHelpBar()
-			} else {
-				helpBar += renderViewportHelpBar()
-			}
-
 			// Show search input and match status if in search mode or has results
 			searchBar := ""
 			if m.searchMode {
@@ -898,7 +894,7 @@ func (m model) View() string {
 			}
 			m.policyView.SetContent(content)
 
-			view = header + headerStr + m.policyView.View() + helpBar + searchBar
+			view = header + headerStr + m.policyView.View() + searchBar
 		}
 
 	case "profiles":
@@ -922,13 +918,33 @@ func (m model) View() string {
 		}
 
 		view = header + "\n" + m.profilesList.View()
-		if m.statusMsg != "" {
-			view += "\n  " + appTheme.statusMessageStyle(m.statusMsg)
-		}
+		// Status message will be handled in the footer area
 	}
 
-	// Position user ARN at the bottom using absolute positioning
+	// Create consistent footer with help bar and user ARN for all views
 	if m.userArn != "" {
+		// Add help bar above Current ARN message based on current screen
+		helpBar := ""
+		statusBar := ""
+
+		switch m.currentScreen {
+		case "policy_document":
+			if m.searchMode {
+				helpBar += renderSearchHelpBar() + "\n"
+			} else {
+				helpBar += renderViewportHelpBar() + "\n"
+			}
+		case "roles", "policies", "profiles":
+			// Show general help for list navigation
+			helpBar += renderListHelpBar(m.currentScreen) + "\n"
+		}
+
+		// Add status message if present
+		if m.statusMsg != "" {
+			statusStyle := appTheme.statusMessageStyle(m.statusMsg)
+			statusBar = statusStyle + "\n"
+		}
+
 		userArnStyle := lipgloss.NewStyle().
 			Background(lipgloss.Color("42")). // Light green background
 			Foreground(lipgloss.Color("0")). // Black text
@@ -941,14 +957,23 @@ func (m model) View() string {
 		viewLines := strings.Split(view, "\n")
 		contentHeight := len(viewLines)
 
-		// Create padding to push the user ARN to the bottom
-		if m.height > contentHeight+1 {
-			paddingLines := m.height - contentHeight - 1
+		// Calculate footer height
+		footerHeight := 1 // User ARN takes one line
+		if helpBar != "" {
+			footerHeight += 1
+		}
+		if statusBar != "" {
+			footerHeight += 1
+		}
+
+		// Create padding to push footer to the bottom
+		if m.height > contentHeight+footerHeight {
+			paddingLines := m.height - contentHeight - footerHeight
 			padding := strings.Repeat("\n", paddingLines)
-			view = view + padding + userArnDisplay
+			view = view + padding + statusBar + helpBar + userArnDisplay
 		} else {
 			// If content is too tall, place at bottom anyway
-			view = view + "\n" + userArnDisplay
+			view = view + "\n" + statusBar + helpBar + userArnDisplay
 		}
 	}
 
@@ -984,6 +1009,41 @@ func renderSearchHelpBar() string {
 	}
 
 	helpText := strings.Join(helpItems, " • ")
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		PaddingLeft(1)
+
+	return helpStyle.Render(helpText)
+}
+
+// renderListHelpBar renders a help bar for list navigation using the same code as original lists
+func renderListHelpBar(currentScreen string) string {
+	// Use the exact same help rendering as the original list components
+	var helpKeys []key.Binding
+
+	switch currentScreen {
+	case "roles", "policies":
+		// Use the same keys that were defined in AdditionalShortHelpKeys for roles/policies, plus filter
+		helpKeys = []key.Binding{keys.Enter, keys.Filter, keys.SwitchProfile, keys.Back}
+	case "profiles":
+		// Use the same keys that were defined in AdditionalShortHelpKeys for profiles, plus filter
+		helpKeys = []key.Binding{keys.Enter, keys.Filter, keys.Back}
+	default:
+		helpKeys = []key.Binding{}
+	}
+
+	// Add the default list navigation keys (up/down) and quit, matching the original pattern
+	allKeys := []key.Binding{keys.Up, keys.Down}
+	allKeys = append(allKeys, helpKeys...)
+	allKeys = append(allKeys, keys.Quit)
+
+	// Use the exact same formatting logic as the list component's help system
+	var helpStrings []string
+	for _, binding := range allKeys {
+		helpStrings = append(helpStrings, fmt.Sprintf("%s %s", binding.Help().Key, binding.Help().Desc))
+	}
+
+	helpText := strings.Join(helpStrings, " • ")
 	helpStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
 		PaddingLeft(1)
