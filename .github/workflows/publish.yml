@@ -61,7 +61,7 @@ jobs:
             exit 1
           fi
       
-      # Update or create the major version tag with better error handling
+      # Update or create the major version tag to point to latest release
       - name: Update major version tag
         if: github.event.inputs.dry_run != 'true'
         uses: actions/github-script@v7
@@ -69,19 +69,20 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const majorVersion = '${{ steps.extract_major.outputs.major_version }}';
-            console.log(`Processing major version tag: ${majorVersion}`);
+            const newTag = '${{ steps.tag_version.outputs.new_tag }}';
+            console.log(`Updating major version tag ${majorVersion} to point to ${newTag}`);
             
             try {
-              // Try to get the reference first
-              const existingRef = await github.rest.git.getRef({
+              // Try to get existing major version tag
+              await github.rest.git.getRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 ref: `tags/${majorVersion}`
               });
               
-              console.log(`Found existing tag ${majorVersion}, updating...`);
+              console.log(`Found existing tag ${majorVersion}, updating to point to ${newTag}...`);
               
-              // Update existing major version tag
+              // Update existing major version tag to point to new release
               await github.rest.git.updateRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -90,13 +91,13 @@ jobs:
                 force: true
               });
               
-              console.log(`Successfully updated ${majorVersion} tag`);
+              console.log(`Successfully updated ${majorVersion} tag to point to ${newTag}`);
               
             } catch (error) {
               if (error.status === 404) {
-                console.log(`Tag ${majorVersion} doesn't exist, creating new one...`);
+                console.log(`Tag ${majorVersion} doesn't exist, creating new one pointing to ${newTag}...`);
                 
-                // Create new major version tag if it doesn't exist
+                // Create new major version tag pointing to the new release
                 await github.rest.git.createRef({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -104,7 +105,7 @@ jobs:
                   sha: context.sha
                 });
                 
-                console.log(`Successfully created ${majorVersion} tag`);
+                console.log(`Successfully created ${majorVersion} tag pointing to ${newTag}`);
               } else {
                 console.error(`Error managing ${majorVersion} tag:`, error);
                 throw error;
@@ -127,4 +128,4 @@ jobs:
         run: |
           echo "::notice::Dry run completed successfully"
           echo "::notice::Would create tag: ${{ steps.tag_version.outputs.new_tag }}"
-          echo "::notice::Would update major version tag: ${{ steps.extract_major.outputs.major_version }}"
+          echo "::notice::Would update major version tag: ${{ steps.extract_major.outputs.major_version }} to point to ${{ steps.tag_version.outputs.new_tag }}"
