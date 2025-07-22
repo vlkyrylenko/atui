@@ -154,6 +154,6 @@ jobs:
           goarch: ${{ matrix.goarch }}
           goversion: ${{ env.GO_VERSION }}
           binary_name: "atui"
-          release_tag: ${{ steps.tag_version.outputs.new_tag }}
-          release_name: ${{ steps.tag_version.outputs.new_tag }}
-          ldflags: -s -X main.version=${{ steps.tag_version.outputs.new_tag }}
+          release_tag: ${{ needs.create-tag-and-release.outputs.new_tag }}
+          release_name: ${{ needs.create-tag-and-release.outputs.new_tag }}
+          ldflags: -s -X main.version=${{ needs.create-tag-and-release.outputs.new_tag }}
