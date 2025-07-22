@@ -13,6 +13,7 @@ jobs:
     # Only run when PRs are merged, not just closed
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    name: Create new semver tag and update major version tag
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -102,40 +103,54 @@ jobs:
                 throw error;
               }
             }
-      
-      # Create a GitHub release with auto-generated release notes
+    outputs:
+        new_tag: ${{ steps.tag_version.outputs.new_tag }}
+        major_version: ${{ steps.extract_major.outputs.major_version }}
+
+  release:
+    runs-on: ubuntu-latest
+    needs:
+      - create-tag-and-release
+    name: Publish Release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag_version.outputs.new_tag }}
-          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          tag_name: ${{ needs.create-tag-and-release.outputs.new_tag }}
+          name: Release ${{ needs.create-tag-and-release.outputs.new_tag }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Trigger the release workflow to build binaries
-      - name: Trigger release workflow
-        uses: actions/github-script@v7
+  build:
+    name: Build release binaries
+    runs-on: ubuntu-latest
+    needs: create-tag-and-release
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: ["386", amd64, arm64]
+        exclude:
+          - goarch: "386"
+            goos: darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const tagName = '${{ steps.tag_version.outputs.new_tag }}';
-            console.log(`Triggering release workflow for tag: ${tagName}`);
-            
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'release.yaml',
-              ref: 'master',
-              inputs: {
-                tag: tagName
-              }
-            });
-            
-            console.log(`Successfully triggered release workflow for ${tagName}`);
-
-      - name: Dry run summary
-        run: |
-          echo "::notice::Dry run completed successfully"
-          echo "::notice::Would create tag: ${{ steps.tag_version.outputs.new_tag }}"
-          echo "::notice::Would update major version tag: ${{ steps.extract_major.outputs.major_version }} to point to ${{ steps.tag_version.outputs.new_tag }}"
+          fetch-depth: 0
+      - name: Build Go binaries
+        uses: wangyoucao577/go-release-action@v1
+        with:
+          pre_command: "export CGO_ENABLED=0"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          goversion: "1.24.5"
+          binary_name: "atui"
+          release_tag: ${{ github.event.release.tag_name || inputs.tag }}
+          release_name: ${{ github.event.release.tag_name || inputs.tag }}
+          ldflags: -s -X main.version=${{ github.event.release.tag_name || inputs.tag }}
