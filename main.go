@@ -376,8 +376,8 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		loadCurrentProfileCmd(),
-		loadIAMRolesCmd(),
-		loadUserArnCmd(),
+		loadIAMRolesCmd(""),
+		loadUserArnCmd(""),
 	)
 }
 
@@ -518,6 +518,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if selected, ok := m.profilesList.SelectedItem().(*ProfileItem); ok {
 					m.currentProfile = selected.name
 					m.statusMsg = fmt.Sprintf("Switched to profile: %s", m.currentProfile)
+					m.currentScreen = "roles"
+					updateKeyBindingsForScreen(m.currentScreen)
+					m.loading = true
+
+					// Clear existing data to force refresh
+					m.rolesList.SetItems([]list.Item{})
+					m.selectedRole = nil
+					m.selectedPolicy = nil
+
+					// Reload roles and user ARN with the new profile
+					return m, tea.Batch(
+						loadIAMRolesCmd(m.currentProfile),
+						loadUserArnCmd(m.currentProfile),
+					)
 				}
 				return m, nil
 			}
@@ -1150,25 +1164,63 @@ type userArnLoadedMsg struct {
 type errorMsg error
 
 // Load IAM roles from AWS
-func loadIAMRolesCmd() tea.Cmd {
+func loadIAMRolesCmd(profile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Load AWS configuration with shared config
-		cfg, err := config.LoadDefaultConfig(ctx)
+		// Load AWS configuration with specified profile
+		var cfg aws.Config
+		var err error
+		if profile != "" {
+			cfg, err = config.LoadDefaultConfig(ctx, config.WithSharedConfigProfile(profile))
+		} else {
+			cfg, err = config.LoadDefaultConfig(ctx)
+		}
 		if err != nil {
 			return errorMsg(fmt.Errorf("error loading AWS configuration: %w", err))
 		}
 
 		// Create clients
 		iamClient := iam.NewFromConfig(cfg)
+		stsClient := sts.NewFromConfig(cfg)
 
-		// List IAM roles
+		// Get current user identity to determine available roles
+		identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		if err != nil {
+			return errorMsg(fmt.Errorf("error getting caller identity: %w", err))
+		}
+
+		userArn := aws.ToString(identity.Arn)
 		var roles []RoleItem
+
+		// If user is already assuming a role, add current role to the list
+		if strings.Contains(userArn, ":assumed-role/") {
+			// Extract role name from assumed role ARN
+			parts := strings.Split(userArn, "/")
+			if len(parts) >= 2 {
+				roleName := parts[1]
+				roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", *identity.Account, roleName)
+
+				roles = append(roles, RoleItem{
+					roleName:    roleName,
+					roleArn:     roleArn,
+					description: "Current assumed role",
+				})
+			}
+		}
+
+		// Try to list roles user can access (may fail with limited permissions)
 		paginator := iam.NewListRolesPaginator(iamClient, &iam.ListRolesInput{})
 		for paginator.HasMorePages() {
 			page, err := paginator.NextPage(ctx)
 			if err != nil {
+				// If we can't list roles, just return current role if available
+				if len(roles) > 0 {
+					break
+				}
+				if strings.Contains(err.Error(), "AccessDenied") || strings.Contains(err.Error(), "UnauthorizedOperation") {
+					return errorMsg(fmt.Errorf("insufficient permissions to list IAM roles."))
+				}
 				return errorMsg(fmt.Errorf("error listing IAM roles: %w", err))
 			}
 
@@ -1191,12 +1243,18 @@ func loadIAMRolesCmd() tea.Cmd {
 }
 
 // Load current user ARN
-func loadUserArnCmd() tea.Cmd {
+func loadUserArnCmd(profile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Load AWS configuration with shared config
-		cfg, err := config.LoadDefaultConfig(ctx)
+		// Load AWS configuration with specified profile
+		var cfg aws.Config
+		var err error
+		if profile != "" {
+			cfg, err = config.LoadDefaultConfig(ctx, config.WithSharedConfigProfile(profile))
+		} else {
+			cfg, err = config.LoadDefaultConfig(ctx)
+		}
 		if err != nil {
 			return errorMsg(fmt.Errorf("error loading AWS configuration: %w", err))
 		}
