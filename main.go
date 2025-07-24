@@ -463,7 +463,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if !m.selectedRole.policiesLoaded {
 						m.loading = true
 						m.statusMsg = fmt.Sprintf("Loading policies for %s...", m.selectedRole.roleName)
-						return m, loadRolePoliciesCmd(m.selectedRole.roleName)
+						return m, loadRolePoliciesCmd(m.selectedRole.roleName, m.currentProfile)
 					} else {
 						// Update policy list with existing policies
 						items := []list.Item{}
@@ -503,7 +503,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if !m.selectedPolicy.documentLoaded {
 						m.loading = true
 						m.statusMsg = fmt.Sprintf("Loading policy document for %s...", m.selectedPolicy.policyName)
-						return m, loadPolicyDocumentCmd(m.selectedPolicy.policyArn)
+						return m, loadPolicyDocumentCmd(m.selectedPolicy.policyArn, m.currentProfile)
 					} else {
 						m.policyDocument = m.selectedPolicy.policyDocument
 						m.policyView.SetContent(m.policyDocument)
@@ -1274,12 +1274,18 @@ func loadUserArnCmd(profile string) tea.Cmd {
 }
 
 // Load policies attached to a role
-func loadRolePoliciesCmd(roleName string) tea.Cmd {
+func loadRolePoliciesCmd(roleName string, profile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Load AWS configuration
-		cfg, err := config.LoadDefaultConfig(ctx)
+		// Load AWS configuration with specified profile
+		var cfg aws.Config
+		var err error
+		if profile != "" {
+			cfg, err = config.LoadDefaultConfig(ctx, config.WithSharedConfigProfile(profile))
+		} else {
+			cfg, err = config.LoadDefaultConfig(ctx)
+		}
 		if err != nil {
 			fmt.Printf("Error loading AWS configuration: %v\n", err)
 			return errorMsg(fmt.Errorf("error loading AWS configuration: %w", err))
@@ -1335,12 +1341,18 @@ func loadRolePoliciesCmd(roleName string) tea.Cmd {
 }
 
 // Load policy document
-func loadPolicyDocumentCmd(policyArn string) tea.Cmd {
+func loadPolicyDocumentCmd(policyArn string, profile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Load AWS configuration
-		cfg, err := config.LoadDefaultConfig(ctx)
+		// Load AWS configuration with specified profile
+		var cfg aws.Config
+		var err error
+		if profile != "" {
+			cfg, err = config.LoadDefaultConfig(ctx, config.WithSharedConfigProfile(profile))
+		} else {
+			cfg, err = config.LoadDefaultConfig(ctx)
+		}
 		if err != nil {
 			return errorMsg(fmt.Errorf("error loading AWS configuration: %w", err))
 		}
